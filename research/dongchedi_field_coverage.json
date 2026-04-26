@@ -1,0 +1,120 @@
+{
+  "task_id": "TASK-F001",
+  "target_platform": {
+    "name": "懂车帝",
+    "primary_endpoint": "https://www.dongchedi.com/sales/sale-x-{YYYYMM}-x-x-x-x",
+    "reference_implementation": "/Users/wendy/Project/dongchedi/create_car_sales_db.py",
+    "sqlite_schema": "month_{YYYYMM}(seriesid, car_name, brand, level, price_range, price_avg, sales_num, dcf_score_link, date)",
+    "cleaning_reference": "/Users/wendy/Project/dongchedi/app.py"
+  },
+  "bubblechart_config_version_fields": [
+    "id",
+    "brand",
+    "brandColor",
+    "model",
+    "configName",
+    "fullName",
+    "price",
+    "sales",
+    "computingPower",
+    "range",
+    "level",
+    "powerType",
+    "month"
+  ],
+  "reusable_from_sales_rank_page": [
+    {
+      "config_version_field": "id",
+      "source": "seriesid",
+      "notes": "车系 ID，与懂车帝车系页一致，可作为稳定主键前缀"
+    },
+    {
+      "config_version_field": "brand",
+      "source": "brand（页面「品牌/级别」前半）",
+      "notes": "与 CSV「品牌名」、建库字段一致"
+    },
+    {
+      "config_version_field": "model",
+      "source": "car_name",
+      "notes": "榜单条目为车系维度名称，可与前端 model 对齐；非具体年款配置名"
+    },
+    {
+      "config_version_field": "price",
+      "source": "price_avg",
+      "notes": "已由 price_mean() 从万元区间解析；与 CSV「均价」一致"
+    },
+    {
+      "config_version_field": "sales",
+      "source": "sales_num",
+      "notes": "需经 app.py 同类逻辑清洗千分位等；榜单为该车系当月零售量汇总"
+    },
+    {
+      "config_version_field": "level",
+      "source": "level（页面「品牌/级别」后半）",
+      "notes": "对应 CSV「车型类型」；大小写/表述可能与前端 mock 略有差异，需归一化"
+    },
+    {
+      "config_version_field": "month",
+      "source": "date",
+      "notes": "建库为 YYYYMM；前端为 YYYY-MM，需格式转换"
+    },
+    {
+      "config_version_field": "fullName",
+      "source": "brand + car_name 拼接",
+      "notes": "无官方 fullName；建议规则：「{brand} {car_name}」或附加「 {price_range}」"
+    }
+  ],
+  "partial_or_derived": [
+    {
+      "config_version_field": "powerType",
+      "availability": "partial",
+      "notes": "榜单页无结构化能源字段；车系名常含 DM/EV/DM-i/增程等可启发式推断，误判风险高。可靠方案依赖车系参配或详情接口"
+    }
+  ],
+  "missing_from_sales_rank_pipeline": [
+    {
+      "config_version_field": "configName",
+      "reason": "销量榜为车系级月度聚合，无具体配置/版型维度"
+    },
+    {
+      "config_version_field": "computingPower",
+      "reason": "榜单与当前 SQLite 均未采集；dcf_score_link 指向懂车分，非芯片 TOPS"
+    },
+    {
+      "config_version_field": "range",
+      "reason": "续航不在销量榜 DOM/表结构中"
+    },
+    {
+      "config_version_field": "brandColor",
+      "reason": "非平台字段；应由应用层色板或哈希生成"
+    }
+  ],
+  "fill_strategies": [
+    {
+      "field": "configName",
+      "strategy": "车系级展示时固定占位如「全系合计」或空字符串；若产品必须配置级气泡，需换数据源（参配+上险/公告等，懂车帝公开月度配置销量不可得）"
+    },
+    {
+      "field": "computingPower",
+      "strategy": "二次抓取：以 seriesid 打开车系「参配」或官方参数区块，解析智驾芯片 TOPS；或对接第三方汽车参数库；缺失时省略字段，前端已用 0 兜底"
+    },
+    {
+      "field": "range",
+      "strategy": "同上，从参配 CLTC/NEDC 等字段解析 representative 续航（多版型取主销或区间中位数）；缺失时省略"
+    },
+    {
+      "field": "powerType",
+      "strategy": "优先参配「能源类型」；次选车系名规则表+人工词典；默认「未知」"
+    },
+    {
+      "field": "brandColor",
+      "strategy": "复用前端 BRAND_COLORS 映射；未知品牌生成稳定伪色"
+    }
+  ],
+  "risks": [
+    "懂车帝页面 class/DOM 变更会导致 create_car_sales_db.py 选择器失效，需回归测试",
+    "sales_num 若含「+」「万」等单位需与 clean_number 一致化处理"
+  ],
+  "verified_at": "2026-04-25",
+  "schema_version": 1
+}

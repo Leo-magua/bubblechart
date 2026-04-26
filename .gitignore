@@ -1,0 +1,8 @@
+# Root-level logs and local tooling
+*.log
+.devmanager/
+.kimi/
+.DS_Store
+
+# Local SQLite under data/ (backend/.gitignore only covers backend/)
+data/*.db

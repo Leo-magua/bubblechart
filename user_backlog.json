@@ -1,0 +1,125 @@
+{
+  "version": "1.0",
+  "created_at": "2026-04-25T00:00:00.000Z",
+  "updated_at": "2026-04-26T14:52:32.880Z",
+  "items": [
+    {
+      "id": "REQ1777215152880",
+      "title": "同步到github",
+      "description": "将当前项目同步到github仓库git@github.com:Leo-magua/bubblechart.git",
+      "category": "Feature",
+      "status": "New",
+      "created_at": "2026-04-26T14:52:32.880Z",
+      "updated_at": "2026-04-26T14:52:32.880Z"
+    },
+    {
+      "id": "REQ1777215058706",
+      "title": "下一轮开发需求",
+      "description": "数据管理页开发需求：图表配置中的品牌高亮配置我希望按销量降序排列。数据预览方面，每月数据卡片旁需增加删除按钮，同时点击每月数据应展示字段更丰富的数据详情表；此外，希望在后台数据导入功能中增加自动选定数据抓取范围的能力，例如选择“202408”到“202507”，即可自动抓取这12个月的数据。",
+      "category": "Feature",
+      "status": "New",
+      "created_at": "2026-04-26T14:50:58.706Z",
+      "updated_at": "2026-04-26T14:50:58.707Z"
+    },
+    {
+      "id": "REQ1777210090009",
+      "title": "前端气泡显示内容优化",
+      "description": "点击气泡后显示的卡片内容去掉品牌名",
+      "category": "Feature",
+      "status": "New",
+      "created_at": "2026-04-26T13:28:10.009Z",
+      "updated_at": "2026-04-26T13:28:10.009Z"
+    },
+    {
+      "id": "REQ1777209846561",
+      "title": "后端的按钮不生效",
+      "description": "后端按钮不生效，还会报错：admin:223 Uncaught SyntaxError: Invalid or unexpected token\nadmin:70 Uncaught ReferenceError: fetchData is not defined\n    at HTMLButtonElement.onclick (admin:70:55)\nadmin:57 Uncaught ReferenceError: addBrand is not defined\n    at HTMLButtonElement.onclick (admin:57:54)\nonclick\t@\tadmin:57\nadmin:70 Uncaught ReferenceError: fetchData is not defined\n    at HTMLButtonElement.onclick (admin:70:55)\nonclick\t@\tadmin:70",
+      "category": "Bug",
+      "status": "New",
+      "created_at": "2026-04-26T13:24:06.561Z",
+      "updated_at": "2026-04-26T13:24:06.561Z"
+    },
+    {
+      "id": "REQ1777209546461",
+      "title": "继续上一个agent没干完的事",
+      "description": "继续上一个agent没干完的事情，以下是交接信息：# BubbleChart_GPT 交接说明\n      2 +\n      3 +## 背景\n      4 +\n      5 +用户诉求：\n      6 +\n      7 +1. 在前端导航栏增加一个跳转到数据管理后台的按钮。\n      8 +2. 排查“数据管理后台配置好像没有生效”的问题。\n      9 +3. 后续用户反馈：“前端刷不出来了都”，随后要求停止修复，写交接文档换 agent 继续。\n     10 +\n     11 +当前项目路径：\n     12 +\n     13 +```text\n     14 +/Users/wendy/AllProject/BubbleChart_GPT\n     15 +```\n     16 +\n     17 +项目结构要点：\n     18 +\n     19 +- 前端：`app/`，React + Vite，默认端口 3000。\n     20 +- 后端：`backend/`，Flask，默认端口 5050。\n     21 +- 后台页面：后端内置 `/admin`。\n     22 +- 图表配置接口：后端 `/api/config`。\n     23 +- 配置文件：`data/chart_config.json`。\n     24 +\n     25 +## 已做改动\n     26 +\n     27 +### 1. 前端导航栏增加“数据后台”按钮\n     28 +\n     29 +文件：\n     30 +\n     31 +```text\n     32 +app/src/sections/Navbar.tsx\n     33 +```\n     34 +\n     35 +改动：\n     36 +\n     37 +- 引入 `Database` 图标。\n     38 +- `NavbarProps` 新增 `adminHref: string`。\n     39 +- 右侧操作区新增按钮：\n     40 +\n     41 +```tsx\n     42 +<a href={adminHref} target=\"_blank\" rel=\"noreferrer\">\n     43 +  <Database className=\"w-3.5 h-3.5\" />\n     44 +  数据后台\n     45 +</a>\n     46 +```\n     47 +\n     48 +### 2. 前端 API 客户端新增后台 URL 方法\n     49 +\n     50 +文件：\n     51 +\n     52 +```text\n     53 +app/src/api/bubblechartClient.ts\n     54 +```\n     55 +\n     56 +改动：\n     57 +\n     58 +- 保留原有 `apiBaseUrl()`。\n     59 +- 新增导出：\n     60 +\n     61 +```ts\n     62 +export function adminUrl(): string {\n     63 +  return `${apiBaseUrl()}/admin`;\n     64 +}\n     65 +```\n     66 +\n     67 +意图：\n     68 +\n     69 +- 如果页面路径是 `/bubblechartgpt/`，`adminUrl()` 会返回 `/bubblechartgpt/admin`。\n     70 +- 如果页面路径是根路径 `/`，返回 `/admin`。\n     71 +\n     72 +### 3. 主页面在从后台切回来时自动重新加载配置\n     73 +\n     74 +文件：\n     75 +\n     76 +```text\n     77 +app/src/App.tsx\n     78 +```\n     79 +\n     80 +改动：\n     81 +\n     82 +- 引入 `adminUrl`。\n     83 +- 抽出 `loadChartConfig`。\n     84 +- 初次加载配置，同时监听：\n     85 +  - `window.focus`\n     86 +  - `document.visibilitychange`\n     87 +- 页面重新获得焦点且可见时重新请求 `/api/config`。\n     88 +\n     89 +目的：\n     90 +\n     91 +- 之前前端只在首次加载时读一次配置。\n     92 +- 后台保存配置后，如果用户回到主页面但不刷新，就会感觉“配置没生效”。\n     93 +- 现在切回主页面时会自动重读配置。\n     94 +\n     95 +### 4. Vite preview 补齐 `/admin` 代理\n     96 +\n     97 +文件：\n     98 +\n     99 +```text\n    100 +app/vite.config.ts\n    101 +```\n    102 +\n    103 +改动：\n    104 +\n    105 +- `preview.proxy` 下新增：\n    106 +\n    107 +```ts\n    108 +\"/admin\": {\n    109 +  target: \"http://127.0.0.1:5050\",\n    110 +  changeOrigin: true,\n    111 +},\n    112 +```\n    113 +\n    114 +原本 `server.proxy` 已经有 `/admin`，`preview.proxy` 缺这个。\n    115 +\n    116 +## 已验证\n    117 +\n    118 +### 构建\n    119 +\n    120 +执行过：\n    121 +\n    122 +```bash\n    123 +cd app\n    124 +npm run build\n    125 +```\n    126 +\n    127 +结果：通过。\n    128 +\n    129 +Vite 有 chunk size warning，但不是本次问题。\n    130 +\n    131 +### 后端接口\n    132 +\n    133 +曾用 curl 验证：\n    134 +\n    135 +```bash\n    136 +curl -sv http://127.0.0.1:5050/api/config\n    137 +curl -sv http://127.0.0.1:5050/admin\n    138 +```\n    139 +\n    140 +结果：\n    141 +\n    142 +- `/api/config` 返回 200。\n    143 +- `/admin` 返回 200。\n    144 +\n    145 +说明当前运行中的后端已经支持配置接口和后台页面。\n    146 +\n    147 +还做过一次等值 PUT，内容与原配置一致：\n    148 +\n    149 +```json\n    150 +{\n    151 +  \"config\": {\n    152 +    \"xAxisRange\": { \"min\": 15, \"max\": 60 },\n    153 +    \"highlightedBrandColors\": {},\n    154 +    \"unselectedBrandColor\": \"#9CA3AF\"\n    155 +  }\n    156 +}\n    157 +```\n    158 +\n    159 +返回 200，没有改变当前配置语义。\n    160 +\n    161 +### 子路径代理\n    162 +\n    163 +曾用 curl 验证：\n    164 +\n    165 +```bash\n    166 +curl -sv http://127.0.0.1:3000/bubblechartgpt/admin\n    167 +curl -sv http://127.0.0.1:3000/bubblechartgpt/api/config\n    168 +```\n    169 +\n    170 +结果：\n    171 +\n    172 +- `/bubblechartgpt/admin` 返回 200。\n    173 +- `/bubblechartgpt/api/config` 返回 200。\n    174 +\n    175 +## 当前问题：前端刷不出来\n    176 +\n    177 +用户反馈后，排查到一个非常明确的问题：\n    178 +\n    179 +访问：\n    180 +\n    181 +```text\n    182 +http://127.0.0.1:3000/bubblechartgpt/\n    183 +```\n    184 +\n    185 +返回的 HTML 中资源路径是：\n    186 +\n    187 +```html\n    188 +<script type=\"module\" crossorigin src=\"/assets/index-FL3t2ZIP.js\"></script>\n    189 +<link rel=\"stylesheet\" crossorigin href=\"/assets/index-BCvdwauj.css\">\n    190 +```\n    191 +\n    192 +但是当前 3000 服务配置的 public base 是：\n    193 +\n    194 +```text\n    195 +/bubblechartgpt/\n    196 +```\n    197 +\n    198 +直接访问：\n    199 +\n    200 +```text\n    201 +http://127.0.0.1:3000/assets/index-FL3t2ZIP.js\n    202 +```\n    203 +\n    204 +返回 404，并提示：\n    205 +\n    206 +```text\n    207 +The server is configured with a public base URL of /bubblechartgpt/ - did you mean to visit /bubblechartgpt/ass\n         ets/index-FL3t2ZIP.js instead?\n    208 +```\n    209 +\n    210 +访问：\n    211 +\n    212 +```text\n    213 +http://127.0.0.1:3000/bubblechartgpt/assets/index-FL3t2ZIP.js\n    214 +```\n    215 +\n    216 +返回 200。\n    217 +\n    218 +因此当前白屏/刷不出来的直接原因很可能是：\n    219 +\n    220 +```text\n    221 +HTML 里引用的是 /assets/...，但服务要求资源从 /bubblechartgpt/assets/... 加载。\n    222 +```\n    223 +\n    224 +## 为什么会这样\n    225 +\n    226 +`app/vite.config.ts` 里：\n    227 +\n    228 +```ts\n    229 +base: process.env.VITE_BASE_PATH || process.env.BASE_PATH || '/',\n    230 +```\n    231 +\n    232 +当前运行日志 `bubblechartgpt-dev.log` 显示 Vite 是以 `/bubblechartgpt/` base 启动的：\n    233 +\n    234 +```text\n    235 +VITE v7.3.0 ready\n    236 +Local: http://localhost:3000/bubblechartgpt/\n    237 +```\n    238 +\n    239 +但 `app/dist/index.html` 或当前服务返回的 HTML 里仍是根路径 `/assets/...`。\n    240 +\n    241 +可能原因：\n    242 +\n    243 +1. 刚才执行 `npm run build` 时没有传 `BASE_PATH=/bubblechartgpt/` 或 `VITE_BASE_PATH=/bubblechartgpt/`，导致生\n         成的 `dist/index.html` 引用根路径资源。\n    244 +2. 当前 3000 服务像是在用 Vite base `/bubblechartgpt/` 提供内容，但返回了不匹配 base 的构建产物。\n    245 +3. 也可能有外部 DevManager/nginx/启动脚本把根路径重定向到 `/bubblechartgpt/`，但静态产物不是用相同 base 构建的\n         。\n    246 +\n    247 +## 下一步建议\n    248 +\n    249 +接手 agent 优先做这几件事：\n    250 +\n    251 +1. 不要继续改业务代码，先恢复前端可访问。\n    252 +2. 确认当前 3000 进程到底是什么启动的：\n    253 +\n    254 +```bash\n    255 +ps -ax -o pid,ppid,stat,command | rg 'BubbleChart_GPT|vite|3000'\n    256 +```\n    257 +\n    258 +如果沙箱报 `operation not permitted`，需要按环境规则申请提升权限。\n    259 +\n    260 +3. 如果访问入口必须是 `/bubblechartgpt/`，重新用匹配 base 的方式构建：\n    261 +\n    262 +```bash\n    263 +cd /Users/wendy/AllProject/BubbleChart_GPT/app\n    264 +BASE_PATH=/bubblechartgpt/ npm run build\n    265 +```\n    266 +\n    267 +或：\n    268 +\n    269 +```bash\n    270 +VITE_BASE_PATH=/bubblechartgpt/ npm run build\n    271 +```\n    272 +\n    273 +构建后检查：\n    274 +\n    275 +```bash\n    276 +sed -n '1,40p' dist/index.html\n    277 +```\n    278 +\n    279 +期望看到：\n    280 +\n    281 +```html\n    282 +src=\"/bubblechartgpt/assets/...\"\n    283 +href=\"/bubblechartgpt/assets/...\"\n    284 +```\n    285 +\n    286 +4. 如果希望根路径 `/` 访问，则应停止用 `/bubblechartgpt/` base 启动，或者让入口改回根路径，避免 base 和访问路径\n         不一致。\n    287 +\n    288 +5. 当前 `app/index.html` 是开发模板，仍写着：\n    289 +\n    290 +```html\n    291 +<script type=\"module\" src=\"/src/main.tsx\"></script>\n    292 +```\n    293 +\n    294 +如果 dev server 用 `/bubblechartgpt/` base，Vite 通常会处理这个路径；但如果看到 HTML 里是 `/assets/...`，说明你\n         拿到的是构建产物，不是 dev 模板。\n    295 +\n    296 +## 需要注意\n    297 +\n    298 +- 不要随手删除 `dist/`，除非明确知道当前服务不是依赖它。刚才用户已经因为前端不可用中断了修复。\n    299 +- 当前项目根没有 `.git`，不能依赖 git 回滚。\n    300 +- `npm run lint` 当前失败，但大多是既有问题，不要作为恢复前端的阻塞项。\n    301 +- `npm run build` 是通过的，但要注意 base 是否正确。\n    302 +\n    303 +## 相关文件\n    304 +\n    305 +本次改动涉及：\n    306 +\n    307 +```text\n    308 +app/src/sections/Navbar.tsx\n    309 +app/src/api/bubblechartClient.ts\n    310 +app/src/App.tsx\n    311 +app/vite.config.ts\n    312 +```\n    313 +\n    314 +运行/日志相关：\n    315 +\n    316 +```text\n    317 +bubblechartgpt-dev.log\n    318 +logs-frontend-dev.log\n    319 +logs-backend.log\n    320 +app/dist/index.html\n    321 +```\n    322 +\n    323 +配置相关：\n    324 +\n    325 +```text\n    326 +data/chart_config.json\n    327 +backend/bubblechart_backend/app.py",
+      "category": "Feature",
+      "status": "New",
+      "created_at": "2026-04-26T13:19:06.461Z",
+      "updated_at": "2026-04-26T13:19:06.461Z"
+    },
+    {
+      "id": "REQ1777206046126",
+      "title": "修复页面无法访问的问题",
+      "description": "当前项目虽然已经部署，但访问不到页面",
+      "category": "Bug",
+      "status": "New",
+      "created_at": "2026-04-26T12:20:46.126Z",
+      "updated_at": "2026-04-26T12:20:46.126Z"
+    },
+    {
+      "id": "REQ1777192326187",
+      "title": "后端管理页面开发需求",
+      "description": "我希望有一个后端页面来管理前端的配置信息。此外，当前主页面的横轴范围是15到60，我希望这个范围可以由我自定义调整，具体参数调整可以放后端页面。\n关于气泡颜色，目前不同品牌的气泡颜色相同，后续我希望能在后端页面中为选中的品牌指定颜色，未选中的品牌统一显示为灰色，以便我重点关注这些品牌。",
+      "category": "Feature",
+      "status": "New",
+      "created_at": "2026-04-26T08:32:06.187Z",
+      "updated_at": "2026-04-26T08:32:06.187Z"
+    },
+    {
+      "id": "REQ1777192310299",
+      "title": "四象限重构",
+      "description": "当前的四象限视图并非我预期的效果，我期望能够出现四象限的轴，并且我可以调整四象限中心的位置",
+      "category": "Feature",
+      "status": "New",
+      "created_at": "2026-04-26T08:31:50.299Z",
+      "updated_at": "2026-04-26T08:31:50.299Z"
+    },
+    {
+      "id": "REQ1777192071961",
+      "title": "增加月份数据选择",
+      "description": "我希望可以在顶部选择各个月份的数据，当前只有2025年8月的",
+      "category": "Feature",
+      "status": "New",
+      "created_at": "2026-04-26T08:27:51.961Z",
+      "updated_at": "2026-04-26T08:27:51.961Z"
+    },
+    {
+      "id": "REQ1777191824854",
+      "title": "bug修复",
+      "description": "点击4象限按钮后，出现报错：Failed to load resource: the server responded with a status of 502 (Bad Gateway)\nutil.js:404 Uncaught Error: Please set $action: \"replace\" to change `type`\n    at assert (util.js:404:15)\n    at mergeNewElOptionToExist (GraphicModel.js:85:16)\n    at GraphicComponentModel2.<anonymous> (GraphicModel.js:187:7)\n    at Array.forEach (<anonymous>)\n    at each (util.js:205:13)\n    at GraphicComponentModel2.optionUpdated (GraphicModel.js:177:12)\n    at GlobalModel2.<anonymous> (Global.js:326:28)\n    at Array.forEach (<anonymous>)\n    at each (util.js:205:13)\n    at GlobalModel2.visitComponent (Global.js:276:7)\nreact-dom-client.development.js:9362 An error occurred in the <BubbleChart> component.\n\nConsider adding an error boundary to your tree to customize error handling behavior.\nVisit https://react.dev/link/error-boundaries to learn more about error boundaries.\ndefaultOnUncaughtError\t@\treact-dom-client.development.js:9362",
+      "category": "Bug",
+      "status": "New",
+      "created_at": "2026-04-26T08:23:44.854Z",
+      "updated_at": "2026-04-26T08:23:44.854Z"
+    },
+    {
+      "id": "REQ1777179450699",
+      "title": "项目部署状态检查",
+      "description": "检查一下当前部署的项目，看看是否正常运行，是否有重复的项目",
+      "category": "Feature",
+      "status": "New",
+      "created_at": "2026-04-26T04:57:30.699Z",
+      "updated_at": "2026-04-26T04:57:30.699Z"
+    },
+    {
+      "id": "REQ1777127696513",
+      "title": "test",
+      "description": "本条指令是测试指令，无需执行开发任务",
+      "category": "Feature",
+      "status": "New",
+      "created_at": "2026-04-25T14:34:56.513Z",
+      "updated_at": "2026-04-25T14:34:56.513Z"
+    },
+    {
+      "id": "REQ202604250001",
+      "title": "为 BubbleChart 构建后端",
+      "description": "BubbleChart_GPT 是 DevManager 管理下的独立项目。后端开发需要先确认目标平台是否能提供所需汽车销量与配置字段，并参考 /Users/wendy/Project/dongchedi 中已有的懂车帝抓取、SQLite 建库、数据清洗和接口工具。",
+      "category": "Backend",
+      "priority": "High",
+      "status": "New",
+      "created_at": "2026-04-25T00:00:00.000Z",
+      "updated_at": "2026-04-25T00:00:00.000Z"
+    }
+  ]
+}

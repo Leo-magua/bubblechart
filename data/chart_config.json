@@ -1,0 +1,12 @@
+{
+  "xAxisRange": {
+    "min": 0.0,
+    "max": 80.0
+  },
+  "highlightedBrandColors": {
+    "方程豹": "#00D084",
+    "比亚迪": "#F73B45",
+    "小米汽车": "#3B82F6"
+  },
+  "unselectedBrandColor": "#9CA3AF"
+}

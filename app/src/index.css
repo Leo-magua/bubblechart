@@ -1,0 +1,150 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* 背景层级 */
+    --bg-canvas: #0B0C0F;
+    --bg-surface: #14161B;
+    --bg-elevated: #1C1F26;
+    --bg-hover: #242830;
+
+    /* 文本层级 */
+    --text-primary: #F0F1F5;
+    --text-secondary: #8B91A7;
+    --text-muted: #5A6073;
+    --text-inverse: #0B0C0F;
+
+    /* 决策语义色（四象限） */
+    --quad-star: #00D084;
+    --quad-premium: #3B82F6;
+    --quad-edge: #94A3B8;
+    --quad-volume: #EF4444;
+
+    /* 品牌色系 */
+    --brand-self: #00D084;
+    --brand-a: #3B82F6;
+    --brand-b: #F59E0B;
+    --brand-c: #EC4899;
+    --brand-d: #8B5CF6;
+    --brand-e: #06B6D4;
+
+    /* UI功能色 */
+    --accent-primary: #00D084;
+    --accent-secondary: #3B82F6;
+    --accent-warning: #F59E0B;
+    --accent-danger: #EF4444;
+
+    /* 分割线 */
+    --border-subtle: rgba(255,255,255,0.06);
+    --border-medium: rgba(255,255,255,0.10);
+
+    /* 阴影与光效 */
+    --shadow-elevated: 0 8px 32px rgba(0,0,0,0.4), 0 0 0 1px var(--border-subtle);
+    --glow-primary: 0 0 16px rgba(0, 208, 132, 0.3);
+    --glow-star: 0 0 20px rgba(0, 208, 132, 0.25);
+
+    /* 圆角 */
+    --radius-sm: 4px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+    --radius-xl: 16px;
+
+    /* shadcn 兼容变量 */
+    --background: 220 14% 4%;
+    --foreground: 230 15% 95%;
+    --card: 220 12% 8%;
+    --card-foreground: 230 15% 95%;
+    --popover: 220 12% 10%;
+    --popover-foreground: 230 15% 95%;
+    --primary: 156 100% 41%;
+    --primary-foreground: 220 14% 4%;
+    --secondary: 220 10% 12%;
+    --secondary-foreground: 230 15% 95%;
+    --muted: 220 10% 12%;
+    --muted-foreground: 225 10% 55%;
+    --accent: 220 10% 12%;
+    --accent-foreground: 230 15% 95%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 220 10% 15%;
+    --input: 220 10% 15%;
+    --ring: 156 100% 41%;
+    --radius: 0.5rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  
+  html, body, #root {
+    height: 100%;
+    overflow: hidden;
+  }
+  
+  body {
+    background-color: var(--bg-canvas);
+    color: var(--text-primary);
+    font-family: "Inter", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* 等宽字体用于数值 */
+  .font-mono {
+    font-family: "JetBrains Mono", "SF Mono", "Consolas", monospace;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer utilities {
+  .bg-canvas { background-color: var(--bg-canvas); }
+  .bg-surface { background-color: var(--bg-surface); }
+  .bg-elevated { background-color: var(--bg-elevated); }
+  .bg-hover { background-color: var(--bg-hover); }
+  
+  .text-primary { color: var(--text-primary); }
+  .text-secondary { color: var(--text-secondary); }
+  .text-muted { color: var(--text-muted); }
+  
+  .border-subtle { border-color: var(--border-subtle); }
+  .border-medium { border-color: var(--border-medium); }
+
+  .shadow-elevated { box-shadow: var(--shadow-elevated); }
+  .glow-primary { box-shadow: var(--glow-primary); }
+  .glow-star { box-shadow: var(--glow-star); }
+}
+
+/* 自定义滚动条 */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+/* 骨架屏动画 */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.animate-shimmer {
+  background: linear-gradient(90deg, var(--bg-surface) 25%, var(--bg-elevated) 50%, var(--bg-surface) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
