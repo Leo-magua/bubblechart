@@ -11,13 +11,18 @@ import {
   postFetchData,
   postImportFile,
   formatMonthLabelCn,
+  fetchSales,
+  deleteMonth,
 } from '@/api/bubblechartClient';
-import type { ChartAdminConfig } from '@/types';
+import type { ChartAdminConfig, ConfigVersion } from '@/types';
+import { Trash2, X } from 'lucide-react';
 
 const DEFAULT_CHART_CONFIG: ChartAdminConfig = {
   xAxisRange: { min: 15, max: 60 },
+  salesRange: { min: 0, max: 50000 },
   highlightedBrandColors: {},
   unselectedBrandColor: '#9CA3AF',
+  showUnselectedBrands: true,
 };
 
 const TABS = [
@@ -35,6 +40,10 @@ export default function AdminPage() {
 
   const [dbInfo, setDbInfo] = useState<{ data_dir: string; db_path: string; db_exists: boolean; month_table_count: number } | null>(null);
   const [chartConfig, setChartConfig] = useState<ChartAdminConfig>(DEFAULT_CHART_CONFIG);
+
+  // 安全获取范围配置（防御后端返回不完整 config）
+  const safeXAxisRange = chartConfig.xAxisRange || DEFAULT_CHART_CONFIG.xAxisRange;
+  const safeSalesRange = chartConfig.salesRange || DEFAULT_CHART_CONFIG.salesRange;
   const [knownBrands, setKnownBrands] = useState<string[]>([]);
   const [brandPalette, setBrandPalette] = useState<string[]>([]);
   const [newBrandName, setNewBrandName] = useState('');
@@ -44,6 +53,8 @@ export default function AdminPage() {
     const now = new Date();
     return `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
   });
+  const [fetchStartMonth, setFetchStartMonth] = useState('');
+  const [fetchEndMonth, setFetchEndMonth] = useState('');
   const [fetchLogs, setFetchLogs] = useState<string[]>([]);
   const [fetchLoading, setFetchLoading] = useState(false);
 
@@ -52,6 +63,10 @@ export default function AdminPage() {
 
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importUploading, setImportUploading] = useState(false);
+
+  const [detailMonth, setDetailMonth] = useState<string | null>(null);
+  const [detailData, setDetailData] = useState<ConfigVersion[] | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
 
   const loadDbInfo = useCallback(async () => {
     const res = await fetchDbInfo();
@@ -102,7 +117,13 @@ export default function AdminPage() {
     setFetchLoading(true);
     setFetchLogs(['开始抓取...']);
     try {
-      const res = await postFetchData([fetchMonth], true);
+      const useRange = fetchStartMonth && fetchEndMonth;
+      const res = await postFetchData(
+        useRange ? [] : [fetchMonth],
+        true,
+        useRange ? fetchStartMonth : undefined,
+        useRange ? fetchEndMonth : undefined
+      );
       if (res.ok) {
         const lines: string[] = [];
         if (res.logs?.length) lines.push(...res.logs);
@@ -118,7 +139,7 @@ export default function AdminPage() {
     } finally {
       setFetchLoading(false);
     }
-  }, [fetchMonth, loadDbInfo, loadPreview]);
+  }, [fetchMonth, fetchStartMonth, fetchEndMonth, loadDbInfo, loadPreview]);
 
   const handleImport = useCallback(async () => {
     if (!importFile) return;
@@ -136,6 +157,42 @@ export default function AdminPage() {
       setImportUploading(false);
     }
   }, [importFile, loadDbInfo, loadPreview]);
+
+  const handleDeleteMonth = useCallback(async (month: string) => {
+    if (!window.confirm(`确定要删除 ${formatMonthLabelCn(month)} 的数据吗？此操作不可恢复。`)) return;
+    const res = await deleteMonth(month);
+    if (res.ok) {
+      toast.success(res.message);
+      await loadDbInfo();
+      await loadPreview();
+    } else {
+      toast.error(res.error || '删除失败');
+    }
+  }, [loadDbInfo, loadPreview]);
+
+  const handleShowDetail = useCallback(async (month: string) => {
+    setDetailMonth(month);
+    setDetailLoading(true);
+    try {
+      const res = await fetchSales(month);
+      if (res.ok) {
+        setDetailData(res.items);
+      } else {
+        toast.error(res.error || '加载详情失败');
+        setDetailData(null);
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '加载详情失败');
+      setDetailData(null);
+    } finally {
+      setDetailLoading(false);
+    }
+  }, []);
+
+  const handleCloseDetail = useCallback(() => {
+    setDetailMonth(null);
+    setDetailData(null);
+  }, []);
 
   const toggleBrand = useCallback((brand: string) => {
     setChartConfig(prev => {
@@ -174,8 +231,11 @@ export default function AdminPage() {
   }, [newBrandName, knownBrands, brandPalette]);
 
   const allBrands = useMemo(() => {
-    const set = new Set([...knownBrands, ...Object.keys(chartConfig.highlightedBrandColors)]);
-    return Array.from(set).sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'));
+    const result = [...knownBrands];
+    const configBrands = Object.keys(chartConfig.highlightedBrandColors).filter(b => !knownBrands.includes(b));
+    configBrands.sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'));
+    result.push(...configBrands);
+    return result;
   }, [knownBrands, chartConfig.highlightedBrandColors]);
 
   return (
@@ -253,8 +313,8 @@ export default function AdminPage() {
                   <input
                     type="number"
                     step="0.1"
-                    value={chartConfig.xAxisRange.min}
-                    onChange={e => setChartConfig(prev => ({ ...prev, xAxisRange: { ...prev.xAxisRange, min: Number(e.target.value) } }))}
+                    value={safeXAxisRange.min}
+                    onChange={e => setChartConfig(prev => ({ ...prev, xAxisRange: { ...(prev.xAxisRange || DEFAULT_CHART_CONFIG.xAxisRange), min: Number(e.target.value) } }))}
                     className="w-24 h-8 px-2 text-xs font-mono rounded-md border"
                     style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}
                   />
@@ -262,12 +322,38 @@ export default function AdminPage() {
                   <input
                     type="number"
                     step="0.1"
-                    value={chartConfig.xAxisRange.max}
-                    onChange={e => setChartConfig(prev => ({ ...prev, xAxisRange: { ...prev.xAxisRange, max: Number(e.target.value) } }))}
+                    value={safeXAxisRange.max}
+                    onChange={e => setChartConfig(prev => ({ ...prev, xAxisRange: { ...(prev.xAxisRange || DEFAULT_CHART_CONFIG.xAxisRange), max: Number(e.target.value) } }))}
                     className="w-24 h-8 px-2 text-xs font-mono rounded-md border"
                     style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}
                   />
                   <span className="text-xs" style={{ color: 'var(--text-muted)' }}>万（成交均价）</span>
+                </div>
+              </div>
+
+              <div className="rounded-xl p-5 space-y-4" style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-subtle)' }}>
+                <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>主图销量范围</h3>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="number"
+                    step="100"
+                    min="0"
+                    value={safeSalesRange.min}
+                    onChange={e => setChartConfig(prev => ({ ...prev, salesRange: { ...(prev.salesRange || DEFAULT_CHART_CONFIG.salesRange), min: Number(e.target.value) } }))}
+                    className="w-28 h-8 px-2 text-xs font-mono rounded-md border"
+                    style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}
+                  />
+                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>到</span>
+                  <input
+                    type="number"
+                    step="100"
+                    min="0"
+                    value={safeSalesRange.max}
+                    onChange={e => setChartConfig(prev => ({ ...prev, salesRange: { ...(prev.salesRange || DEFAULT_CHART_CONFIG.salesRange), max: Number(e.target.value) } }))}
+                    className="w-28 h-8 px-2 text-xs font-mono rounded-md border"
+                    style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}
+                  />
+                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>台（月销量）</span>
                 </div>
               </div>
 
@@ -293,7 +379,20 @@ export default function AdminPage() {
                     </button>
                   </div>
                 </div>
-                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>勾选的品牌会使用指定颜色；未勾选的品牌在前端统一显示为灰色。</p>
+                <div className="flex items-center gap-3">
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={chartConfig.showUnselectedBrands}
+                      onChange={e => setChartConfig(prev => ({ ...prev, showUnselectedBrands: e.target.checked }))}
+                      className="h-3.5 w-3.5 rounded shrink-0"
+                    />
+                    <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>显示非高亮车型</span>
+                  </label>
+                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                    {chartConfig.showUnselectedBrands ? '关闭后前端只显示已勾选的高亮品牌' : '开启后前端显示所有品牌，未勾选的显示为灰色'}
+                  </span>
+                </div>
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
                   {allBrands.map(brand => {
                     const selected = brand in chartConfig.highlightedBrandColors;
@@ -343,30 +442,61 @@ export default function AdminPage() {
           {activeTab === 'fetch' && (
             <div className="rounded-xl p-5 space-y-4" style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-subtle)' }}>
               <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>抓取懂车帝销量数据</h3>
-              <div className="flex items-center gap-3 flex-wrap">
-                <input
-                  type="text"
-                  placeholder="如 202508"
-                  value={fetchMonth}
-                  onChange={e => setFetchMonth(e.target.value)}
-                  className="h-8 px-2 text-xs font-mono rounded-md border w-32"
-                  style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}
-                />
-                <button
-                  onClick={handleFetch}
-                  disabled={fetchLoading}
-                  className="h-8 px-4 text-xs rounded-md font-medium disabled:opacity-50"
-                  style={{ backgroundColor: 'var(--accent-primary)', color: 'var(--text-inverse)' }}
-                >
-                  {fetchLoading ? '抓取中...' : '开始抓取'}
-                </button>
-                <button
-                  onClick={loadPreview}
-                  className="h-8 px-4 text-xs rounded-md font-medium"
-                  style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)' }}
-                >
-                  刷新预览
-                </button>
+              <div className="space-y-3">
+                <div className="flex items-center gap-3 flex-wrap">
+                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>范围抓取：</span>
+                  <input
+                    type="text"
+                    placeholder="开始 如 202408"
+                    value={fetchStartMonth}
+                    onChange={e => setFetchStartMonth(e.target.value)}
+                    className="h-8 px-2 text-xs font-mono rounded-md border w-32"
+                    style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}
+                  />
+                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>到</span>
+                  <input
+                    type="text"
+                    placeholder="结束 如 202507"
+                    value={fetchEndMonth}
+                    onChange={e => setFetchEndMonth(e.target.value)}
+                    className="h-8 px-2 text-xs font-mono rounded-md border w-32"
+                    style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}
+                  />
+                  <button
+                    onClick={handleFetch}
+                    disabled={fetchLoading || !(fetchStartMonth && fetchEndMonth)}
+                    className="h-8 px-4 text-xs rounded-md font-medium disabled:opacity-50"
+                    style={{ backgroundColor: 'var(--accent-primary)', color: 'var(--text-inverse)' }}
+                  >
+                    {fetchLoading ? '抓取中...' : '自动抓取范围'}
+                  </button>
+                </div>
+                <div className="flex items-center gap-3 flex-wrap">
+                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>单月抓取：</span>
+                  <input
+                    type="text"
+                    placeholder="如 202508"
+                    value={fetchMonth}
+                    onChange={e => setFetchMonth(e.target.value)}
+                    className="h-8 px-2 text-xs font-mono rounded-md border w-32"
+                    style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}
+                  />
+                  <button
+                    onClick={handleFetch}
+                    disabled={fetchLoading}
+                    className="h-8 px-4 text-xs rounded-md font-medium disabled:opacity-50"
+                    style={{ backgroundColor: 'var(--accent-primary)', color: 'var(--text-inverse)' }}
+                  >
+                    {fetchLoading ? '抓取中...' : '开始抓取'}
+                  </button>
+                  <button
+                    onClick={loadPreview}
+                    className="h-8 px-4 text-xs rounded-md font-medium"
+                    style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)' }}
+                  >
+                    刷新预览
+                  </button>
+                </div>
               </div>
               <div
                 className="rounded-lg p-3 font-mono text-xs h-64 overflow-auto whitespace-pre-wrap"
@@ -399,17 +529,39 @@ export default function AdminPage() {
                 previewData.map(item => (
                   <div
                     key={item.month}
-                    className="rounded-xl p-4 space-y-3"
+                    className="rounded-xl p-4 space-y-3 cursor-pointer transition-colors"
                     style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-subtle)' }}
+                    onClick={() => handleShowDetail(item.month)}
                   >
-                    <div className="flex items-center gap-2">
-                      <span
-                        className="px-2 py-0.5 rounded text-[10px] font-medium"
-                        style={{ backgroundColor: 'rgba(0,208,132,0.15)', color: 'var(--accent-primary)' }}
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className="px-2 py-0.5 rounded text-[10px] font-medium"
+                          style={{ backgroundColor: 'rgba(0,208,132,0.15)', color: 'var(--accent-primary)' }}
+                        >
+                          {formatMonthLabelCn(item.month)}
+                        </span>
+                        <span className="text-xs" style={{ color: 'var(--text-muted)' }}>共 {item.count} 条记录</span>
+                      </div>
+                      <button
+                        onClick={e => {
+                          e.stopPropagation();
+                          void handleDeleteMonth(item.month);
+                        }}
+                        className="p-1.5 rounded-md transition-colors"
+                        style={{ color: 'var(--text-muted)' }}
+                        title="删除该月数据"
+                        onMouseEnter={(e) => {
+                          (e.currentTarget as HTMLElement).style.color = 'var(--destructive, #ef4444)';
+                          (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--bg-hover)';
+                        }}
+                        onMouseLeave={(e) => {
+                          (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)';
+                          (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent';
+                        }}
                       >
-                        {formatMonthLabelCn(item.month)}
-                      </span>
-                      <span className="text-xs" style={{ color: 'var(--text-muted)' }}>共 {item.count} 条记录</span>
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
                     </div>
                     <div className="overflow-x-auto">
                       <table className="w-full text-xs">
@@ -468,6 +620,90 @@ export default function AdminPage() {
           )}
         </div>
       </div>
+
+      {/* 数据详情弹窗 */}
+      {detailMonth && (
+        <div
+          className="fixed inset-0 flex items-center justify-center"
+          style={{
+            backgroundColor: 'rgba(11, 12, 15, 0.6)',
+            backdropFilter: 'blur(4px)',
+            zIndex: 100,
+          }}
+          onClick={handleCloseDetail}
+        >
+          <div
+            className="w-[900px] max-w-[calc(100%-2rem)] max-h-[80vh] flex flex-col rounded-xl overflow-hidden"
+            style={{
+              backgroundColor: 'var(--bg-elevated)',
+              boxShadow: 'var(--shadow-elevated)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* 头部 */}
+            <div
+              className="flex items-center justify-between px-6 py-4 shrink-0"
+              style={{ borderBottom: '1px solid var(--border-subtle)' }}
+            >
+              <h2 className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>
+                {formatMonthLabelCn(detailMonth)} 数据详情
+              </h2>
+              <button
+                type="button"
+                onClick={handleCloseDetail}
+                className="p-1.5 rounded-lg transition-colors"
+                style={{ color: 'var(--text-muted)' }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--bg-hover)';
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent';
+                }}
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* 内容 */}
+            <div className="flex-1 overflow-auto px-6 py-4">
+              {detailLoading ? (
+                <p className="text-xs text-center py-8" style={{ color: 'var(--text-muted)' }}>加载中...</p>
+              ) : !detailData || detailData.length === 0 ? (
+                <p className="text-xs text-center py-8" style={{ color: 'var(--text-muted)' }}>暂无数据</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                        <th className="text-left py-2 px-2 font-medium whitespace-nowrap" style={{ color: 'var(--text-muted)' }}>品牌</th>
+                        <th className="text-left py-2 px-2 font-medium whitespace-nowrap" style={{ color: 'var(--text-muted)' }}>车型</th>
+                        <th className="text-left py-2 px-2 font-medium whitespace-nowrap" style={{ color: 'var(--text-muted)' }}>级别</th>
+                        <th className="text-left py-2 px-2 font-medium whitespace-nowrap" style={{ color: 'var(--text-muted)' }}>价格区间</th>
+                        <th className="text-right py-2 px-2 font-medium whitespace-nowrap" style={{ color: 'var(--text-muted)' }}>均价(万)</th>
+                        <th className="text-right py-2 px-2 font-medium whitespace-nowrap" style={{ color: 'var(--text-muted)' }}>销量</th>
+                        <th className="text-left py-2 px-2 font-medium whitespace-nowrap" style={{ color: 'var(--text-muted)' }}>能源类型</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {detailData.map((row, i) => (
+                        <tr key={i} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                          <td className="py-2 px-2 whitespace-nowrap" style={{ color: 'var(--text-secondary)' }}>{row.brand}</td>
+                          <td className="py-2 px-2 whitespace-nowrap" style={{ color: 'var(--text-primary)' }}>{row.model}</td>
+                          <td className="py-2 px-2 whitespace-nowrap" style={{ color: 'var(--text-secondary)' }}>{row.level}</td>
+                          <td className="py-2 px-2 whitespace-nowrap" style={{ color: 'var(--text-secondary)' }}>{row.priceRange || '-'}</td>
+                          <td className="py-2 px-2 text-right font-mono whitespace-nowrap" style={{ color: 'var(--text-secondary)' }}>{row.price}</td>
+                          <td className="py-2 px-2 text-right font-mono whitespace-nowrap" style={{ color: 'var(--text-secondary)' }}>{row.sales}</td>
+                          <td className="py-2 px-2 whitespace-nowrap" style={{ color: 'var(--text-secondary)' }}>{row.powerType}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

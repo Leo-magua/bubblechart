@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback, useMemo } from 'react';
+import { useEffect, useRef, useCallback, useMemo, useState } from 'react';
 import * as echarts from 'echarts';
 import type { ConfigVersion, ViewPreset, QuadrantState, QuadrantType } from '@/types';
 import { quadrantInfos } from '@/data/mockData';
@@ -43,6 +43,7 @@ export function BubbleChart({
   const chartRef = useRef<HTMLDivElement>(null);
   const chartInstance = useRef<echarts.ECharts | null>(null);
   const applyQuadrantOverlaysRef = useRef<(() => void) | null>(null);
+  const [activeBrand, setActiveBrand] = useState<string | null>(null);
 
   const xValues = useMemo(() => data.map(d => {
     if (preset.xAxis.field === 'price') return d.price;
@@ -69,6 +70,16 @@ export function BubbleChart({
 
   const buildOption = useCallback((): echarts.EChartsOption => {
     const g = GRID;
+    const salesValues = data
+      .map(item => item.sales)
+      .filter((sales): sales is number => Number.isFinite(sales) && sales >= 0);
+    const minSales = salesValues.length ? Math.min(...salesValues) : 0;
+    const maxSales = salesValues.length ? Math.max(...salesValues) : 1;
+
+    // 平方根变换（比 log 保留更多差异）
+    const sqrtMin = Math.sqrt(Math.max(0, minSales));
+    const sqrtMax = Math.sqrt(maxSales);
+    const sqrtSpan = Math.max(sqrtMax - sqrtMin, 1);
     const seriesData = data.map((item) => {
       const xVal = preset.xAxis.field === 'price' ? item.price
         : preset.xAxis.field === 'computingPower' ? (item.computingPower || 0)
@@ -83,6 +94,7 @@ export function BubbleChart({
       const highlightedColor = highlightedBrandColors[item.brand];
       const brandDisplayColor = highlightedColor || unselectedBrandColor;
       const isHighlightedBrand = Boolean(highlightedColor);
+      const isDimmed = activeBrand !== null && activeBrand !== item.brand;
 
       // 根据同品牌内的配置位置决定透明度
       const sameBrandConfigs = data.filter(d => d.brand === item.brand);
@@ -95,9 +107,9 @@ export function BubbleChart({
         itemStyle: {
           color: isSelected
             ? brandDisplayColor
-            : hexToRgba(brandDisplayColor, selectedId ? 0.25 : (isHighlightedBrand ? opacityBase : 0.45)),
-          borderColor: isSelected ? '#ffffff' : hexToRgba('#ffffff', 0.2),
-          borderWidth: isSelected ? 2 : 1,
+            : hexToRgba(brandDisplayColor, isDimmed ? 0.06 : (selectedId ? 0.25 : (isHighlightedBrand ? opacityBase : 0.45))),
+          borderColor: isSelected ? '#ffffff' : hexToRgba('#ffffff', isDimmed ? 0.05 : 0.2),
+          borderWidth: isSelected ? 2 : (isDimmed ? 0 : 1),
           shadowBlur: isSelected ? 16 : 0,
           shadowColor: isSelected ? 'rgba(255,255,255,0.4)' : 'transparent',
         },
@@ -217,15 +229,49 @@ export function BubbleChart({
           lineStyle: { color: 'rgba(255,255,255,0.04)', type: 'dashed' },
         },
       },
+      dataZoom: [
+        {
+          type: 'slider',
+          xAxisIndex: 0,
+          height: 14,
+          bottom: 2,
+          borderColor: 'transparent',
+          backgroundColor: 'rgba(255,255,255,0.04)',
+          fillerColor: 'rgba(255,255,255,0.1)',
+          handleStyle: { color: 'rgba(255,255,255,0.3)' },
+          textStyle: { color: '#5A6073', fontSize: 10 },
+          showDetail: false,
+        },
+        {
+          type: 'slider',
+          yAxisIndex: 0,
+          width: 10,
+          right: 2,
+          top: g.top,
+          bottom: g.bottom + 18,
+          borderColor: 'transparent',
+          backgroundColor: 'rgba(255,255,255,0.03)',
+          fillerColor: 'rgba(255,255,255,0.08)',
+          handleStyle: { color: 'rgba(255,255,255,0.2)' },
+          textStyle: { color: '#5A6073', fontSize: 10 },
+          showDetail: false,
+        },
+        {
+          type: 'inside',
+          xAxisIndex: 0,
+        },
+        {
+          type: 'inside',
+          yAxisIndex: 0,
+        },
+      ],
       series: [
         {
           type: 'scatter',
           data: seriesData,
           symbolSize: (val: number[]) => {
             const sales = val[2];
-            const minSales = 300;
-            const maxSales = 16000;
-            const normalized = (sales - minSales) / (maxSales - minSales);
+            const normalized = (Math.sqrt(Math.max(0, sales)) - sqrtMin) / sqrtSpan;
             return Math.max(10, Math.min(70, 10 + normalized * 60));
           },
           animationDuration: 600,
@@ -237,7 +283,7 @@ export function BubbleChart({
     };
 
     return option;
-  }, [data, preset, quadrant, selectedId, xMean, yMean, highlightedBrandColors, unselectedBrandColor]);
+  }, [data, preset, quadrant, selectedId, xMean, yMean, highlightedBrandColors, unselectedBrandColor, activeBrand]);
 
   // 初始化图表
   useEffect(() => {
@@ -274,6 +320,39 @@ export function BubbleChart({
     const option = buildOption();
     chartInstance.current.setOption(option, { notMerge: false });
   }, [buildOption]);
+
+  // dataZoom 初始范围：避免硬编码在 buildOption 中导致每次重绘重置用户手动调整
+  useEffect(() => {
+    const chart = chartInstance.current;
+    if (!chart) return;
+
+    const salesValues = data
+      .map(item => item.sales)
+      .filter((sales): sales is number => Number.isFinite(sales) && sales >= 0);
+    const priceVals = data
+      .map(item => item.price)
+      .filter((price): price is number => Number.isFinite(price) && price > 0);
+
+    function getSmartMax(vals: number[], hardMin: number): number {
+      if (vals.length === 0) return hardMin;
+      const sorted = [...vals].sort((a, b) => a - b);
+      const p95 = sorted[Math.max(0, Math.ceil(0.95 * sorted.length) - 1)];
+      const max = sorted[sorted.length - 1];
+      if (max <= p95 * 1.5) return Math.ceil(max * 1.08);
+      return Math.max(hardMin, Math.ceil(p95 * 1.5));
+    }
+
+    const priceSmartMax = getSmartMax(priceVals, 100);
+    const salesSmartMax = getSmartMax(salesValues, 20000);
+
+    chart.dispatchAction({
+      type: 'dataZoom',
+      batch: [
+        { dataZoomIndex: 0, startValue: 0, endValue: priceSmartMax },
+        { dataZoomIndex: 1, startValue: 0, endValue: salesSmartMax },
+      ],
+    });
+  }, [data]);
 
   // 四象限：replaceMerge graphic；rAF 确保与坐标系同帧；中心点/竖线/横线可拖拽
   useEffect(() => {
@@ -526,6 +605,33 @@ export function BubbleChart({
     };
   }, [quadrant, preset, onQuadrantChange, xMean, yMean, data.length]);
 
+  const highlightedBrands = useMemo(
+    () => Object.keys(highlightedBrandColors).sort((a, b) => a.localeCompare(b, 'zh-Hans-CN')),
+    [highlightedBrandColors],
+  );
+
+  const [legendCollapsed, setLegendCollapsed] = useState(false);
+  const [legendOffset, setLegendOffset] = useState({ x: 0, y: 0 });
+
+  const handleLegendDrag = useCallback((e: React.MouseEvent) => {
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const initialX = legendOffset.x;
+    const initialY = legendOffset.y;
+    const onMove = (ev: MouseEvent) => {
+      setLegendOffset({
+        x: initialX + (ev.clientX - startX),
+        y: initialY + (ev.clientY - startY),
+      });
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }, [legendOffset]);
+
   return (
     <div className="relative w-full h-full">
       <div ref={chartRef} className="w-full h-full" />
@@ -552,6 +658,79 @@ export function BubbleChart({
           四象限视图
         </span>
       </div>
+
+      {/* 品牌图例 */}
+      {highlightedBrands.length > 0 && (
+        legendCollapsed ? (
+          <button
+            className="absolute flex items-center justify-center w-7 h-7 rounded-full cursor-pointer"
+            style={{
+              top: GRID.top + 8 + legendOffset.y,
+              right: GRID.right + 14 - legendOffset.x,
+              backgroundColor: 'rgba(20, 22, 27, 0.9)',
+              backdropFilter: 'blur(8px)',
+              border: '1px solid var(--border-subtle)',
+              zIndex: 10,
+            }}
+            onClick={() => setLegendCollapsed(false)}
+            title="展开图例"
+          >
+            <span className="text-xs">📋</span>
+          </button>
+        ) : (
+          <div
+            className="absolute rounded-lg overflow-hidden"
+            style={{
+              top: GRID.top + 8 + legendOffset.y,
+              right: GRID.right + 14 - legendOffset.x,
+              backgroundColor: 'rgba(20, 22, 27, 0.9)',
+              backdropFilter: 'blur(8px)',
+              border: '1px solid var(--border-subtle)',
+              minWidth: '120px',
+              maxWidth: '380px',
+              resize: 'horizontal',
+              zIndex: 10,
+            }}
+          >
+            {/* 拖拽头部 + 折叠按钮 */}
+            <div
+              className="flex items-center justify-between px-2.5 py-1 cursor-move select-none"
+              onMouseDown={handleLegendDrag}
+            >
+              <span className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>品牌图例</span>
+              <button
+                className="w-5 h-5 flex items-center justify-center rounded hover:bg-white/10 transition-colors"
+                onClick={(e) => { e.stopPropagation(); setLegendCollapsed(true); }}
+                title="收起"
+              >
+                <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>−</span>
+              </button>
+            </div>
+            {/* 品牌列表 */}
+            <div className="flex flex-wrap gap-1 px-2.5 pb-2">
+              {highlightedBrands.map(brand => {
+                const color = highlightedBrandColors[brand];
+                const isActive = activeBrand === brand;
+                return (
+                  <button
+                    key={brand}
+                    onClick={() => setActiveBrand(prev => prev === brand ? null : brand)}
+                    className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] transition-all shrink-0"
+                    style={{
+                      backgroundColor: isActive ? 'rgba(255,255,255,0.12)' : 'transparent',
+                      border: `1px solid ${isActive ? color : 'transparent'}`,
+                      color: isActive ? '#F0F1F5' : 'var(--text-secondary)',
+                    }}
+                  >
+                    <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: color }} />
+                    {brand}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )
+      )}
     </div>
   );
 }

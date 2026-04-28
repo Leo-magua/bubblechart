@@ -16,8 +16,10 @@ from bubblechart_backend import crawler
 
 DEFAULT_CHART_CONFIG: dict[str, Any] = {
     "xAxisRange": {"min": 15, "max": 60},
+    "salesRange": {"min": 0, "max": 50000},
     "highlightedBrandColors": {},
     "unselectedBrandColor": "#9CA3AF",
+    "showUnselectedBrands": True,
 }
 
 DEFAULT_BRAND_PALETTE = [
@@ -62,6 +64,16 @@ def _normalize_chart_config(raw: Any) -> dict[str, Any]:
         except (TypeError, ValueError):
             pass
 
+    sales_range = raw.get("salesRange")
+    if isinstance(sales_range, dict):
+        try:
+            min_value = float(sales_range.get("min", config["salesRange"]["min"]))
+            max_value = float(sales_range.get("max", config["salesRange"]["max"]))
+            if 0 <= min_value < max_value:
+                config["salesRange"] = {"min": min_value, "max": max_value}
+        except (TypeError, ValueError):
+            pass
+
     highlighted = raw.get("highlightedBrandColors")
     if isinstance(highlighted, dict):
         normalized: dict[str, str] = {}
@@ -75,6 +87,13 @@ def _normalize_chart_config(raw: Any) -> dict[str, Any]:
         raw.get("unselectedBrandColor"),
         DEFAULT_CHART_CONFIG["unselectedBrandColor"],
     )
+
+    show_unselected = raw.get("showUnselectedBrands")
+    if isinstance(show_unselected, bool):
+        config["showUnselectedBrands"] = show_unselected
+    else:
+        config["showUnselectedBrands"] = bool(show_unselected) if show_unselected is not None else DEFAULT_CHART_CONFIG["showUnselectedBrands"]
+
     return config
 
 
@@ -97,9 +116,10 @@ def _save_chart_config(cfg: Config, config: dict[str, Any]) -> None:
 
 
 def _list_known_brands(cfg: Config) -> list[str]:
-    brands: set[str] = set()
+    brand_sales: dict[str, int] = {}
     if dbutil.db_exists(cfg.db_path):
         import sqlite3
+        from bubblechart_backend.cleaning import clean_number
 
         conn = sqlite3.connect(str(cfg.db_path))
         try:
@@ -108,15 +128,25 @@ def _list_known_brands(cfg: Config) -> list[str]:
                 if not table:
                     continue
                 try:
-                    cur = conn.execute(f'SELECT DISTINCT brand FROM "{table}" WHERE brand IS NOT NULL AND TRIM(brand) != ""')
-                    brands.update(str(row[0]).strip() for row in cur.fetchall() if str(row[0]).strip())
+                    cur = conn.execute(f'SELECT brand, sales_num FROM "{table}" WHERE brand IS NOT NULL AND TRIM(brand) != ""')
+                    for row in cur.fetchall():
+                        brand = str(row[0]).strip()
+                        if not brand:
+                            continue
+                        sales = clean_number(row[1])
+                        brand_sales[brand] = brand_sales.get(brand, 0) + sales
                 except sqlite3.Error:
                     continue
         finally:
             conn.close()
 
-    brands.update(_load_chart_config(cfg)["highlightedBrandColors"].keys())
-    return sorted(brands)
+    # 将配置中的品牌也加入（销量为0）
+    for b in _load_chart_config(cfg)["highlightedBrandColors"].keys():
+        if b not in brand_sales:
+            brand_sales[b] = 0
+
+    # 按销量降序，相同销量按名称字母序
+    return sorted(brand_sales.keys(), key=lambda b: (-brand_sales.get(b, 0), b))
 
 
 def create_app(config: Optional[Config] = None) -> Flask:
@@ -220,7 +250,11 @@ def create_app(config: Optional[Config] = None) -> Flask:
         months = body.get("months")
         headless = body.get("headless", True)
 
-        if not months:
+        start_month = body.get("startMonth", "").strip()
+        end_month = body.get("endMonth", "").strip()
+        if not months and start_month and end_month:
+            months = crawler.get_month_list(start_month, end_month)
+        elif not months:
             now = __import__("datetime").datetime.now()
             months = [now.strftime("%Y%m")]
 
@@ -293,6 +327,32 @@ def create_app(config: Optional[Config] = None) -> Flask:
             "brands": _list_known_brands(cfg),
             "palette": DEFAULT_BRAND_PALETTE,
         })
+
+    @app.route("/api/delete_month", methods=["POST"])
+    def delete_month():
+        body = request.get_json(silent=True) or {}
+        month = body.get("month", "").strip()
+        if not month:
+            return jsonify({"ok": False, "error": "缺少 month 参数"}), 400
+
+        table = dongchedi_sales.validated_month_table_name(month)
+        if not table:
+            return jsonify({"ok": False, "error": f"月份格式错误: {month}，应为 YYYY-MM"}), 400
+
+        if not dbutil.db_exists(cfg.db_path):
+            return jsonify({"ok": False, "error": "数据库不存在"}), 400
+
+        import sqlite3
+        conn = sqlite3.connect(str(cfg.db_path))
+        try:
+            conn.execute(f'DROP TABLE IF EXISTS "{table}"')
+            conn.commit()
+        except sqlite3.Error as e:
+            return jsonify({"ok": False, "error": str(e)}), 500
+        finally:
+            conn.close()
+
+        return jsonify({"ok": True, "month": month, "message": f"已删除 {month} 数据"})
 
     @app.route("/api/import", methods=["POST"])
     def import_data():
@@ -371,6 +431,13 @@ def create_app(config: Optional[Config] = None) -> Flask:
             <span class="hint">单位：万</span>
         </div>
         <div class="form-row">
+            <label>主图销量范围（月销量）：</label>
+            <input type="number" id="sales-min" step="100" min="0" placeholder="最小值">
+            <span>到</span>
+            <input type="number" id="sales-max" step="100" min="0" placeholder="最大值">
+            <span class="hint">单位：台</span>
+        </div>
+        <div class="form-row">
             <label>新增关注品牌：</label>
             <input type="text" id="brand-name" placeholder="输入品牌名">
             <button class="btn" onclick="addBrand()">添加品牌</button>
@@ -402,6 +469,7 @@ def create_app(config: Optional[Config] = None) -> Flask:
     const API_BASE = '/api';
     let chartConfig = {
         xAxisRange: { min: 15, max: 60 },
+        salesRange: { min: 0, max: 50000 },
         highlightedBrandColors: {},
         unselectedBrandColor: '#9CA3AF'
     };
@@ -474,6 +542,8 @@ def create_app(config: Optional[Config] = None) -> Flask:
             chartConfig = configData.config;
             document.getElementById('x-min').value = chartConfig.xAxisRange.min;
             document.getElementById('x-max').value = chartConfig.xAxisRange.max;
+            document.getElementById('sales-min').value = chartConfig.salesRange.min;
+            document.getElementById('sales-max').value = chartConfig.salesRange.max;
         }
         if (brandsData.ok) {
             knownBrands = brandsData.brands || [];
@@ -495,14 +565,22 @@ def create_app(config: Optional[Config] = None) -> Flask:
     async function saveChartConfig() {
         const min = Number(document.getElementById('x-min').value);
         const max = Number(document.getElementById('x-max').value);
+        const salesMin = Number(document.getElementById('sales-min').value);
+        const salesMax = Number(document.getElementById('sales-max').value);
         const status = document.getElementById('config-status');
         if (!Number.isFinite(min) || !Number.isFinite(max) || min >= max) {
             status.textContent = '横轴范围必须是有效数字，并且最小值小于最大值。';
             status.style.color = '#cf1322';
             return;
         }
+        if (!Number.isFinite(salesMin) || !Number.isFinite(salesMax) || salesMin < 0 || salesMin >= salesMax) {
+            status.textContent = '销量范围必须是有效数字，且满足 0 <= 最小值 < 最大值。';
+            status.style.color = '#cf1322';
+            return;
+        }
 
         chartConfig.xAxisRange = { min, max };
+        chartConfig.salesRange = { min: salesMin, max: salesMax };
         const res = await fetch(`${API_BASE}/config`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
@@ -601,15 +679,15 @@ def create_app(config: Optional[Config] = None) -> Flask:
 </html>
     """
 
-    @app.route("/admin", methods=["GET"])
-    def admin_page():
-        """数据管理后台页面（静态 HTML，不经 Jinja 解析，避免与内联 JS 冲突）。"""
-        return Response(_ADMIN_HTML, mimetype="text/html; charset=utf-8")
-
     # ------------------------------------------------------------------
     # 前端静态文件服务 (SPA)
     # ------------------------------------------------------------------
     _FRONTEND_DIST = str(cfg.project_root / "app" / "dist")
+
+    @app.route("/admin", methods=["GET"])
+    def admin_page():
+        """管理后台页面 —— 统一走 React SPA，与前端路由保持一致。"""
+        return send_from_directory(_FRONTEND_DIST, "index.html")
 
     @app.route("/assets/<path:filepath>")
     def serve_frontend_assets(filepath):
@@ -619,7 +697,7 @@ def create_app(config: Optional[Config] = None) -> Flask:
     @app.route("/<path:path>")
     def serve_frontend_spa(path):
         # API 路由已匹配，不处理
-        if path.startswith("api/") or path == "admin":
+        if path.startswith("api/"):
             from flask import abort
             abort(404)
         # 空路径 → index.html

@@ -1,8 +1,35 @@
 {
   "version": "1.0",
   "created_at": "2026-04-25T00:00:00.000Z",
-  "updated_at": "2026-04-26T14:52:32.880Z",
+  "updated_at": "2026-04-28T15:16:52.079Z",
   "items": [
+    {
+      "id": "REQ1777389412079",
+      "title": "疑问",
+      "description": "为什么当页面实效的时候，数据后台会出现老版本的数据后台，是什么原因？",
+      "category": "Feature",
+      "status": "New",
+      "created_at": "2026-04-28T15:16:52.079Z",
+      "updated_at": "2026-04-28T15:16:52.079Z"
+    },
+    {
+      "id": "REQ1777388777618",
+      "title": "销量高于两万的信息未显示",
+      "description": "当前销量高于两万的信息未显示，需要显示出来。然后需要支持我在数据后台设置显示在主视图中的最低数量和最高数量；另外气泡尺寸的计算可以考虑对数变换之类的",
+      "category": "Feature",
+      "status": "New",
+      "created_at": "2026-04-28T15:06:17.618Z",
+      "updated_at": "2026-04-28T15:06:17.618Z"
+    },
+    {
+      "id": "REQ1777219865386",
+      "title": "从数据后台切换回主页会报错",
+      "description": "从数据后台切换回主页会报错，数据会变成mock示例数据，报错信息：加载失败：<!doctype html> <html lang=\"en\"> <head> <meta charset=\"UTF-8\" /> <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" /> <title>Project Portfolio Manager</title> <sc",
+      "category": "Feature",
+      "status": "New",
+      "created_at": "2026-04-26T16:11:05.386Z",
+      "updated_at": "2026-04-26T16:11:05.386Z"
+    },
     {
       "id": "REQ1777215152880",
       "title": "同步到github",

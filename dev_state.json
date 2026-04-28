@@ -200,11 +200,11 @@
       "id": "F095",
       "name": "同步到github",
       "description": "将当前项目同步到github仓库git@github.com:Leo-magua/bubblechart.git",
-      "status": "In_Progress",
+      "status": "Pending",
       "category": "Feature",
       "backlog_ref": "REQ1777215152880",
       "created_at": "2026-04-26T14:52:32.885Z",
-      "updated_at": "2026-04-26T14:53:02.651Z"
+      "updated_at": "2026-04-28T16:43:53.464Z"
     }
   ],
   "current_context": {
@@ -220,6 +220,12 @@
     }
   },
   "changelog": [
+    {
+      "timestamp": "2026-04-28T16:43:53.464Z",
+      "type": "status_change",
+      "message": "任务状态变更: 同步到github",
+      "details": "Queued → Pending"
+    },
     {
       "id": "LOG1777215182656",
       "timestamp": "2026-04-26T14:53:02.656Z",
@@ -559,13 +565,6 @@
       "type": "system",
       "message": "任务完成: bug修复",
       "details": "开发完成 (cursor, 耗时151.7秒)"
-    },
-    {
-      "id": "LOG1777193278470",
-      "timestamp": "2026-04-26T08:47:58.470Z",
-      "type": "system",
-      "message": "开始开发任务: bug修复",
-      "details": ""
     }
   ],
   "updated_at": "2026-04-26T08:58:17.670Z"

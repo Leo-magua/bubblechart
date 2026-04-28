@@ -15,14 +15,15 @@ import type {
 
 function apiBaseUrl(): string {
   const raw = import.meta.env['VITE_API_BASE_URL'] as string | undefined;
-  if (raw == null || String(raw).trim() === '') {
-    // Auto-detect sub-path deployment (e.g. /bubblechartgpt/)
-    const path = window.location.pathname;
-    const m = path.match(/^(\/[^/]+)\//);
-    if (m) return m[1];
-    return '';
+  if (raw != null && String(raw).trim() !== '') {
+    return String(raw).replace(/\/$/, '');
   }
-  return String(raw).replace(/\/$/, '');
+  // 与 main.tsx 中 BrowserRouter basename 一致，避免子路径下 pathname 为 /foo（无尾斜杠）时拼错成 /api 而取到整页 HTML
+  const fromVite = import.meta.env.BASE_URL;
+  if (fromVite !== '' && fromVite !== '/') {
+    return fromVite.replace(/\/$/, '');
+  }
+  return '';
 }
 
 export function adminUrl(): string {
@@ -140,19 +141,31 @@ export async function fetchPreview(): Promise<PreviewResponse | HttpErr> {
 }
 
 /** POST /api/fetch */
-export async function postFetchData(months: string[], headless = true): Promise<FetchResponse | HttpErr> {
+export async function postFetchData(months: string[], headless = true, startMonth?: string, endMonth?: string): Promise<FetchResponse | HttpErr> {
+  const body: Record<string, unknown> = { months, headless };
+  if (startMonth) body.startMonth = startMonth;
+  if (endMonth) body.endMonth = endMonth;
   return requestJson<FetchResponse>('/api/fetch', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ months, headless }),
+    body: JSON.stringify(body),
   });
 }
 
 /** PUT /api/config */
-export async function updateChartConfig(config: { xAxisRange: { min: number; max: number }; highlightedBrandColors: Record<string, string>; unselectedBrandColor: string }): Promise<UpdateChartConfigResponse | HttpErr> {
+export async function updateChartConfig(config: { xAxisRange: { min: number; max: number }; salesRange: { min: number; max: number }; highlightedBrandColors: Record<string, string>; unselectedBrandColor: string; showUnselectedBrands: boolean }): Promise<UpdateChartConfigResponse | HttpErr> {
   return requestJson<UpdateChartConfigResponse>('/api/config', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ config }),
+  });
+}
+
+/** POST /api/delete_month */
+export async function deleteMonth(month: string): Promise<{ ok: true; month: string; message: string } | HttpErr> {
+  return requestJson<{ ok: true; month: string; message: string }>('/api/delete_month', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ month }),
   });
 }

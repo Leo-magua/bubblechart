@@ -78,7 +78,7 @@ export const viewPresets: ViewPreset[] = [
     id: 'sales-health',
     name: '销量健康度',
     icon: 'BarChart3',
-    xAxis: { field: 'price', label: '成交均价', unit: '万', min: 15, max: 60 },
+    xAxis: { field: 'price', label: '成交均价', unit: '万', min: 0, max: 60 },
     yAxis: { field: 'sales', label: '月销量', unit: '台', min: 0, max: 18000 },
     bubbleSize: { field: 'sales', label: '月销量' },
   },

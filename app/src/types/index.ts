@@ -25,6 +25,7 @@ export interface ViewPreset {
     unit: string;
     min?: number;
     max?: number;
+    log?: boolean;
   };
   yAxis: {
     field: string;
@@ -32,6 +33,7 @@ export interface ViewPreset {
     unit: string;
     min?: number;
     max?: number;
+    log?: boolean;
   };
   bubbleSize: {
     field: string;
@@ -52,8 +54,13 @@ export interface ChartAdminConfig {
     min: number;
     max: number;
   };
+  salesRange: {
+    min: number;
+    max: number;
+  };
   highlightedBrandColors: Record<string, string>;
   unselectedBrandColor: string;
+  showUnselectedBrands: boolean;
 }
 
 export type QuadrantType = 'star' | 'premium' | 'edge' | 'volume';

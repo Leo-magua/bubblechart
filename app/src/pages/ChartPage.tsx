@@ -27,8 +27,10 @@ function getMean(values: number[]) {
 const FALLBACK_MONTH = mockData[0]?.month ?? '2026-03';
 const DEFAULT_CHART_CONFIG: ChartAdminConfig = {
   xAxisRange: { min: 15, max: 60 },
+  salesRange: { min: 0, max: 50000 },
   highlightedBrandColors: {},
   unselectedBrandColor: '#9CA3AF',
+  showUnselectedBrands: true,
 };
 
 export default function ChartPage() {
@@ -121,17 +123,69 @@ export default function ChartPage() {
     });
   }, [data]);
 
-  const configuredPresets = useMemo(() => viewPresets.map(preset => {
-    if (preset.id !== 'sales-health') return preset;
-    return {
-      ...preset,
-      xAxis: {
-        ...preset.xAxis,
-        min: chartConfig.xAxisRange.min,
-        max: chartConfig.xAxisRange.max,
-      },
-    };
-  }), [chartConfig.xAxisRange.max, chartConfig.xAxisRange.min]);
+  const configuredPresets = useMemo(() => {
+    // 安全获取 chartConfig 中的范围配置（防御后端返回不完整 config）
+    const safeXAxisRange = chartConfig.xAxisRange || { min: 15, max: 60 };
+    const safeSalesRange = chartConfig.salesRange || { min: 0, max: 50000 };
+
+    // 计算实际数据的各字段范围，用于动态调整轴上限/下限
+    const priceValues = data.map(d => d.price).filter(v => Number.isFinite(v));
+    const salesValues = data.map(d => d.sales).filter(v => Number.isFinite(v));
+    const computingValues = data.map(d => d.computingPower || 0).filter(v => Number.isFinite(v) && v > 0);
+    const rangeValues = data.map(d => d.range || 0).filter(v => Number.isFinite(v) && v > 0);
+
+    const priceMax = priceValues.length > 0 ? Math.max(...priceValues) : 60;
+    const priceMin = priceValues.length > 0 ? Math.min(...priceValues) : 0;
+    const salesMax = salesValues.length > 0 ? Math.max(...salesValues) : 50000;
+    const salesMin = salesValues.length > 0 ? Math.min(...salesValues) : 0;
+    const computingMax = computingValues.length > 0 ? Math.max(...computingValues) : 1200;
+    const rangeMax = rangeValues.length > 0 ? Math.max(...rangeValues) : 900;
+
+    // 给一点 padding，让气泡不贴边；最小值向下取整，最大值向上取整
+    const padMax = (v: number) => Math.ceil(v * 1.08);
+    const padMin = (v: number) => Math.max(0, Math.floor(v * 0.92));
+
+    return viewPresets.map(preset => {
+      if (preset.id !== 'sales-health') {
+        let xMax = preset.xAxis.max ?? 0;
+        let yMax = preset.yAxis.max ?? 0;
+        let xMin = preset.xAxis.min ?? 0;
+
+        if (preset.xAxis.field === 'price') {
+          xMax = Math.max(xMax, padMax(priceMax));
+          xMin = Math.min(xMin, padMin(priceMin));
+        } else if (preset.xAxis.field === 'computingPower') {
+          xMax = Math.max(xMax, padMax(computingMax));
+        } else if (preset.xAxis.field === 'range') {
+          xMax = Math.max(xMax, padMax(rangeMax));
+        }
+
+        if (preset.yAxis.field === 'price') {
+          yMax = Math.max(yMax, padMax(priceMax));
+        } else if (preset.yAxis.field === 'sales') {
+          yMax = Math.max(yMax, padMax(salesMax));
+        }
+
+        return {
+          ...preset,
+          xAxis: { ...preset.xAxis, min: xMin, max: xMax },
+          yAxis: { ...preset.yAxis, max: yMax },
+        };
+      }
+
+      // sales-health: 结合 chartConfig 手动设置和实际数据动态扩展
+      const xMax = Math.max(safeXAxisRange.max, padMax(priceMax));
+      const xMin = Math.min(safeXAxisRange.min, padMin(priceMin));
+      const yMax = Math.max(safeSalesRange.max, padMax(salesMax));
+      const yMin = Math.max(0, Math.min(safeSalesRange.min, padMin(salesMin)));
+
+      return {
+        ...preset,
+        xAxis: { ...preset.xAxis, min: xMin, max: xMax },
+        yAxis: { ...preset.yAxis, min: yMin, max: yMax },
+      };
+    });
+  }, [chartConfig.salesRange?.max, chartConfig.salesRange?.min, chartConfig.xAxisRange?.max, chartConfig.xAxisRange?.min, data]);
 
   const preset = useMemo(
     () => configuredPresets.find(p => p.id === activePreset) || configuredPresets[0],
@@ -162,14 +216,17 @@ export default function ChartPage() {
   }, [yValues, quadrant.yThreshold, quadrant.yManualValue]);
 
   const displayData = useMemo(() => {
-    return data.map(item => {
+    const filtered = chartConfig.showUnselectedBrands
+      ? data
+      : data.filter(item => item.brand in chartConfig.highlightedBrandColors);
+    return filtered.map(item => {
       const highlightedColor = chartConfig.highlightedBrandColors[item.brand];
       return {
         ...item,
         brandColor: highlightedColor || chartConfig.unselectedBrandColor,
       };
     });
-  }, [data, chartConfig.highlightedBrandColors, chartConfig.unselectedBrandColor]);
+  }, [data, chartConfig.highlightedBrandColors, chartConfig.unselectedBrandColor, chartConfig.showUnselectedBrands]);
 
   const selectedConfig = useMemo(() => displayData.find(d => d.id === selectedId) || null, [displayData, selectedId]);
 
