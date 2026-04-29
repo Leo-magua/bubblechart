@@ -30,6 +30,75 @@ function hexToRgba(hex: string, alpha: number): string {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
+/** 构建散点 series 数据与气泡大小参数 */
+function buildSeriesItems(
+  data: ConfigVersion[],
+  preset: ViewPreset,
+  xMean: number,
+  yMean: number,
+  highlightedBrandColors: Record<string, string>,
+  unselectedBrandColor: string,
+  activeBrand: string | null,
+  selectedId: string | null,
+) {
+  const salesValues = data
+    .map(item => item.sales)
+    .filter((sales): sales is number => Number.isFinite(sales) && sales >= 0);
+  const minSales = salesValues.length ? Math.min(...salesValues) : 0;
+  const maxSales = salesValues.length ? Math.max(...salesValues) : 1;
+
+  const sqrtMin = Math.sqrt(Math.max(0, minSales));
+  const sqrtMax = Math.sqrt(maxSales);
+  const sqrtSpan = Math.max(sqrtMax - sqrtMin, 1);
+
+  const items = data.map((item) => {
+    const xVal = preset.xAxis.field === 'price' ? item.price
+      : preset.xAxis.field === 'computingPower' ? (item.computingPower || 0)
+      : (item.range || 0);
+    const yVal = preset.yAxis.field === 'price' ? item.price
+      : preset.yAxis.field === 'sales' ? item.sales
+      : item.sales;
+
+    const qType = getQuadrant(xVal, yVal, xMean, yMean);
+    const qInfo = quadrantInfos[qType];
+    const isSelected = selectedId === item.id;
+    const highlightedColor = highlightedBrandColors[item.brand];
+    const brandDisplayColor = highlightedColor || unselectedBrandColor;
+    const isHighlightedBrand = Boolean(highlightedColor);
+    const isDimmed = activeBrand !== null && activeBrand !== item.brand;
+
+    const sameBrandConfigs = data.filter(d => d.brand === item.brand);
+    const configIndex = sameBrandConfigs.findIndex(d => d.id === item.id);
+    const opacityBase = 0.5 + (configIndex / Math.max(sameBrandConfigs.length - 1, 1)) * 0.5;
+
+    return {
+      name: item.model,
+      value: [xVal, yVal, item.sales, item.id, item.brand, brandDisplayColor, item.configName, qType, qInfo.color, opacityBase, item.model, item.priceRange || ''],
+      itemStyle: {
+        color: isSelected
+          ? brandDisplayColor
+          : hexToRgba(brandDisplayColor, isDimmed ? 0.06 : (selectedId ? 0.25 : (isHighlightedBrand ? opacityBase : 0.45))),
+        borderColor: isSelected ? '#ffffff' : hexToRgba('#ffffff', isDimmed ? 0.05 : 0.2),
+        borderWidth: isSelected ? 2 : (isDimmed ? 0 : 1),
+        shadowBlur: isSelected ? 16 : 0,
+        shadowColor: isSelected ? 'rgba(255,255,255,0.4)' : 'transparent',
+      },
+      emphasis: {
+        itemStyle: {
+          color: brandDisplayColor,
+          borderColor: '#ffffff',
+          borderWidth: 2,
+          shadowBlur: 20,
+          shadowColor: 'rgba(255,255,255,0.5)',
+        },
+        scale: 1.2,
+      },
+    };
+  });
+
+  return { items, sqrtMin, sqrtSpan };
+}
+
 export function BubbleChart({
   data,
   preset,
@@ -43,7 +112,14 @@ export function BubbleChart({
   const chartRef = useRef<HTMLDivElement>(null);
   const chartInstance = useRef<echarts.ECharts | null>(null);
   const applyQuadrantOverlaysRef = useRef<(() => void) | null>(null);
+  const overlayRafId = useRef<number | null>(null);
   const [activeBrand, setActiveBrand] = useState<string | null>(null);
+
+  // Refs for values that change often but shouldn't trigger full option rebuild
+  const activeBrandRef = useRef(activeBrand);
+  const selectedIdRef = useRef(selectedId);
+  activeBrandRef.current = activeBrand;
+  selectedIdRef.current = selectedId;
 
   const xValues = useMemo(() => data.map(d => {
     if (preset.xAxis.field === 'price') return d.price;
@@ -68,63 +144,22 @@ export function BubbleChart({
     return yValues.reduce((a, b) => a + b, 0) / yValues.length;
   }, [yValues, quadrant.yThreshold, quadrant.yManualValue]);
 
+  // 防抖：每帧最多执行一次 overlay 更新
+  const scheduleApplyOverlays = useCallback(() => {
+    if (overlayRafId.current !== null) return;
+    overlayRafId.current = requestAnimationFrame(() => {
+      overlayRafId.current = null;
+      applyQuadrantOverlaysRef.current?.();
+    });
+  }, []);
+
   const buildOption = useCallback((): echarts.EChartsOption => {
     const g = GRID;
-    const salesValues = data
-      .map(item => item.sales)
-      .filter((sales): sales is number => Number.isFinite(sales) && sales >= 0);
-    const minSales = salesValues.length ? Math.min(...salesValues) : 0;
-    const maxSales = salesValues.length ? Math.max(...salesValues) : 1;
-
-    // 平方根变换（比 log 保留更多差异）
-    const sqrtMin = Math.sqrt(Math.max(0, minSales));
-    const sqrtMax = Math.sqrt(maxSales);
-    const sqrtSpan = Math.max(sqrtMax - sqrtMin, 1);
-    const seriesData = data.map((item) => {
-      const xVal = preset.xAxis.field === 'price' ? item.price
-        : preset.xAxis.field === 'computingPower' ? (item.computingPower || 0)
-        : (item.range || 0);
-      const yVal = preset.yAxis.field === 'price' ? item.price
-        : preset.yAxis.field === 'sales' ? item.sales
-        : item.sales;
-
-      const qType = getQuadrant(xVal, yVal, xMean, yMean);
-      const qInfo = quadrantInfos[qType];
-      const isSelected = selectedId === item.id;
-      const highlightedColor = highlightedBrandColors[item.brand];
-      const brandDisplayColor = highlightedColor || unselectedBrandColor;
-      const isHighlightedBrand = Boolean(highlightedColor);
-      const isDimmed = activeBrand !== null && activeBrand !== item.brand;
-
-      // 根据同品牌内的配置位置决定透明度
-      const sameBrandConfigs = data.filter(d => d.brand === item.brand);
-      const configIndex = sameBrandConfigs.findIndex(d => d.id === item.id);
-      const opacityBase = 0.5 + (configIndex / Math.max(sameBrandConfigs.length - 1, 1)) * 0.5;
-
-      return {
-        name: item.model,
-        value: [xVal, yVal, item.sales, item.id, item.brand, brandDisplayColor, item.configName, qType, qInfo.color, opacityBase, item.model, item.priceRange || ''],
-        itemStyle: {
-          color: isSelected
-            ? brandDisplayColor
-            : hexToRgba(brandDisplayColor, isDimmed ? 0.06 : (selectedId ? 0.25 : (isHighlightedBrand ? opacityBase : 0.45))),
-          borderColor: isSelected ? '#ffffff' : hexToRgba('#ffffff', isDimmed ? 0.05 : 0.2),
-          borderWidth: isSelected ? 2 : (isDimmed ? 0 : 1),
-          shadowBlur: isSelected ? 16 : 0,
-          shadowColor: isSelected ? 'rgba(255,255,255,0.4)' : 'transparent',
-        },
-        emphasis: {
-          itemStyle: {
-            color: brandDisplayColor,
-            borderColor: '#ffffff',
-            borderWidth: 2,
-            shadowBlur: 20,
-            shadowColor: 'rgba(255,255,255,0.5)',
-          },
-          scale: 1.2,
-        },
-      };
-    });
+    const { items: seriesData, sqrtMin, sqrtSpan } = buildSeriesItems(
+      data, preset, xMean, yMean,
+      highlightedBrandColors, unselectedBrandColor,
+      activeBrandRef.current, selectedIdRef.current,
+    );
 
     const option: echarts.EChartsOption = {
       backgroundColor: 'transparent',
@@ -259,6 +294,7 @@ export function BubbleChart({
         {
           type: 'inside',
           xAxisIndex: 0,
+          zoomOnMouseWheel: false,
         },
         {
           type: 'inside',
@@ -283,7 +319,7 @@ export function BubbleChart({
     };
 
     return option;
-  }, [data, preset, quadrant, selectedId, xMean, yMean, highlightedBrandColors, unselectedBrandColor, activeBrand]);
+  }, [data, preset, xMean, yMean, highlightedBrandColors, unselectedBrandColor]);
 
   // 初始化图表
   useEffect(() => {
@@ -295,7 +331,7 @@ export function BubbleChart({
     chart.on('click', (params: any) => {
       if (params.componentType === 'series') {
         const clickedId = params.data.value[3] as string;
-        onSelect(selectedId === clickedId ? null : clickedId);
+        onSelect(selectedIdRef.current === clickedId ? null : clickedId);
       } else {
         onSelect(null);
       }
@@ -303,23 +339,54 @@ export function BubbleChart({
 
     const handleResize = () => {
       chart.resize();
-      applyQuadrantOverlaysRef.current?.();
+      scheduleApplyOverlays();
     };
     window.addEventListener('resize', handleResize);
 
+    chart.on('dataZoom', scheduleApplyOverlays);
+    chart.on('finished', scheduleApplyOverlays);
+
     return () => {
       window.removeEventListener('resize', handleResize);
+      chart.off('dataZoom', scheduleApplyOverlays);
+      chart.off('finished', scheduleApplyOverlays);
+      if (overlayRafId.current !== null) {
+        cancelAnimationFrame(overlayRafId.current);
+        overlayRafId.current = null;
+      }
       chart.dispose();
       chartInstance.current = null;
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 更新图表配置
+  // 全量更新（基础配置变化时）
   useEffect(() => {
     if (!chartInstance.current) return;
-    const option = buildOption();
-    chartInstance.current.setOption(option, { notMerge: false });
+    chartInstance.current.setOption(buildOption(), { notMerge: false });
   }, [buildOption]);
+
+  // 局部样式更新：activeBrand / selectedId 变化时只更新 series.data，不重绘整个图表
+  const lastAppliedBrand = useRef<string | null>(activeBrand);
+  const lastAppliedSelected = useRef<string | null>(selectedId);
+  useEffect(() => {
+    if (!chartInstance.current) return;
+    // 若仅是 data/preset 等变化导致本 effect 重跑，但 brand/selectedId 没变，则跳过
+    if (lastAppliedBrand.current === activeBrand && lastAppliedSelected.current === selectedId) return;
+    lastAppliedBrand.current = activeBrand;
+    lastAppliedSelected.current = selectedId;
+
+    const { items: seriesData } = buildSeriesItems(
+      data, preset, xMean, yMean,
+      highlightedBrandColors, unselectedBrandColor,
+      activeBrand, selectedId,
+    );
+    chartInstance.current.setOption(
+      { series: [{ data: seriesData }] },
+      { notMerge: false, lazyUpdate: true },
+    );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeBrand, selectedId]);
 
   // dataZoom 初始范围：避免硬编码在 buildOption 中导致每次重绘重置用户手动调整
   useEffect(() => {
@@ -354,7 +421,7 @@ export function BubbleChart({
     });
   }, [data]);
 
-  // 四象限：replaceMerge graphic；rAF 确保与坐标系同帧；中心点/竖线/横线可拖拽
+  // 四象限：replaceMerge graphic；'mean' 模式实时读取当前可见轴范围
   useEffect(() => {
     const clear = () => {
       if (!chartInstance.current) return;
@@ -368,7 +435,7 @@ export function BubbleChart({
         clear();
         return;
       }
-      if (data.length === 0 || !Number.isFinite(xMean) || !Number.isFinite(yMean)) {
+      if (data.length === 0) {
         clear();
         return;
       }
@@ -382,7 +449,36 @@ export function BubbleChart({
       const gridW = width - g.left - g.right;
       const gridH = height - g.top - g.bottom;
 
-      const cross = chart.convertToPixel(finder, [xMean, yMean]) as number[] | undefined;
+      // 实时读取当前可见轴范围（支持 dataZoom 后的动态中点）
+      const visibleXMin = chart.convertFromPixel({ xAxisIndex: 0 }, [gridX])?.[0] ?? (preset.xAxis.min ?? 0);
+      const visibleXMax = chart.convertFromPixel({ xAxisIndex: 0 }, [gridX + gridW])?.[0] ?? (preset.xAxis.max ?? 100);
+      const visibleYMin = chart.convertFromPixel({ yAxisIndex: 0 }, [gridY + gridH])?.[1] ?? (preset.yAxis.min ?? 0);
+      const visibleYMax = chart.convertFromPixel({ yAxisIndex: 0 }, [gridY])?.[1] ?? (preset.yAxis.max ?? 100);
+
+      let thresholdX: number;
+      if (quadrant.xThreshold === 'mean') {
+        thresholdX = (visibleXMin + visibleXMax) / 2;
+      } else if (quadrant.xThreshold === 'manual') {
+        thresholdX = quadrant.xManualValue ?? (visibleXMin + visibleXMax) / 2;
+      } else {
+        thresholdX = quadrant.xThreshold;
+      }
+
+      let thresholdY: number;
+      if (quadrant.yThreshold === 'mean') {
+        thresholdY = (visibleYMin + visibleYMax) / 2;
+      } else if (quadrant.yThreshold === 'manual') {
+        thresholdY = quadrant.yManualValue ?? (visibleYMin + visibleYMax) / 2;
+      } else {
+        thresholdY = quadrant.yThreshold;
+      }
+
+      if (!Number.isFinite(thresholdX) || !Number.isFinite(thresholdY)) {
+        clear();
+        return;
+      }
+
+      const cross = chart.convertToPixel(finder, [thresholdX, thresholdY]) as number[] | undefined;
       if (!cross || !Number.isFinite(cross[0]!) || !Number.isFinite(cross[1]!)) {
         clear();
         return;
@@ -591,7 +687,7 @@ export function BubbleChart({
         applyQuadrantOverlaysRef.current = null;
       };
     }
-    if (data.length === 0 || !Number.isFinite(xMean) || !Number.isFinite(yMean)) {
+    if (data.length === 0) {
       clear();
       return () => {
         applyQuadrantOverlaysRef.current = null;
@@ -603,7 +699,7 @@ export function BubbleChart({
       cancelAnimationFrame(raf);
       applyQuadrantOverlaysRef.current = null;
     };
-  }, [quadrant, preset, onQuadrantChange, xMean, yMean, data.length]);
+  }, [quadrant, preset, onQuadrantChange, data.length]);
 
   const highlightedBrands = useMemo(
     () => Object.keys(highlightedBrandColors).sort((a, b) => a.localeCompare(b, 'zh-Hans-CN')),

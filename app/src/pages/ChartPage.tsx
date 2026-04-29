@@ -20,10 +20,6 @@ import { DetailPanel } from '@/sections/DetailPanel';
 import { FooterBar } from '@/sections/FooterBar';
 import { DataImportModal } from '@/sections/DataImportModal';
 
-function getMean(values: number[]) {
-  return values.reduce((a, b) => a + b, 0) / values.length;
-}
-
 const FALLBACK_MONTH = mockData[0]?.month ?? '2026-03';
 const DEFAULT_CHART_CONFIG: ChartAdminConfig = {
   xAxisRange: { min: 15, max: 60 },
@@ -192,28 +188,23 @@ export default function ChartPage() {
     [activePreset, configuredPresets],
   );
 
-  const xValues = useMemo(() => data.map(d => {
-    if (preset.xAxis.field === 'price') return d.price;
-    if (preset.xAxis.field === 'computingPower') return d.computingPower || 0;
-    if (preset.xAxis.field === 'range') return d.range || 0;
-    return d.price;
-  }), [data, preset]);
-
-  const yValues = useMemo(() => data.map(d => {
-    if (preset.yAxis.field === 'price') return d.price;
-    if (preset.yAxis.field === 'sales') return d.sales;
-    return d.sales;
-  }), [data, preset]);
-
   const xMean = useMemo(() => {
-    if (quadrant.xThreshold !== 'mean' && quadrant.xManualValue !== undefined) return quadrant.xManualValue;
-    return getMean(xValues);
-  }, [xValues, quadrant.xThreshold, quadrant.xManualValue]);
+    if (typeof quadrant.xThreshold === 'number') return quadrant.xThreshold;
+    if (quadrant.xThreshold === 'manual' && quadrant.xManualValue !== undefined) return quadrant.xManualValue;
+    // 默认：轴范围的中间值（相对横纵轴固定，不随数据变化）
+    const min = preset.xAxis.min ?? 0;
+    const max = preset.xAxis.max ?? 100;
+    return (min + max) / 2;
+  }, [preset.xAxis.min, preset.xAxis.max, quadrant.xThreshold, quadrant.xManualValue]);
 
   const yMean = useMemo(() => {
-    if (quadrant.yThreshold !== 'mean' && quadrant.yManualValue !== undefined) return quadrant.yManualValue;
-    return getMean(yValues);
-  }, [yValues, quadrant.yThreshold, quadrant.yManualValue]);
+    if (typeof quadrant.yThreshold === 'number') return quadrant.yThreshold;
+    if (quadrant.yThreshold === 'manual' && quadrant.yManualValue !== undefined) return quadrant.yManualValue;
+    // 默认：轴范围的中间值（相对横纵轴固定，不随数据变化）
+    const min = preset.yAxis.min ?? 0;
+    const max = preset.yAxis.max ?? 100;
+    return (min + max) / 2;
+  }, [preset.yAxis.min, preset.yAxis.max, quadrant.yThreshold, quadrant.yManualValue]);
 
   const displayData = useMemo(() => {
     const filtered = chartConfig.showUnselectedBrands
