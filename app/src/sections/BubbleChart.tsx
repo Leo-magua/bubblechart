@@ -4,6 +4,8 @@ import type { ConfigVersion, ViewPreset, QuadrantState, QuadrantType } from '@/t
 import { quadrantInfos } from '@/data/mockData';
 
 const GRID = { left: 60, right: 40, top: 40, bottom: 50 } as const;
+const LEGEND_BASE_TOP = GRID.top + 8;
+const LEGEND_BASE_RIGHT = GRID.right + 14;
 
 interface BubbleChartProps {
   data: ConfigVersion[];
@@ -51,6 +53,13 @@ function buildSeriesItems(
   const sqrtMax = Math.sqrt(maxSales);
   const sqrtSpan = Math.max(sqrtMax - sqrtMin, 1);
 
+  // 预计算品牌分组，避免每个数据点都 O(n) filter
+  const brandMap: Record<string, ConfigVersion[]> = {};
+  for (const d of data) {
+    if (!brandMap[d.brand]) brandMap[d.brand] = [];
+    brandMap[d.brand].push(d);
+  }
+
   const items = data.map((item) => {
     const xVal = preset.xAxis.field === 'price' ? item.price
       : preset.xAxis.field === 'computingPower' ? (item.computingPower || 0)
@@ -67,7 +76,7 @@ function buildSeriesItems(
     const isHighlightedBrand = Boolean(highlightedColor);
     const isDimmed = activeBrand !== null && activeBrand !== item.brand;
 
-    const sameBrandConfigs = data.filter(d => d.brand === item.brand);
+    const sameBrandConfigs = brandMap[item.brand];
     const configIndex = sameBrandConfigs.findIndex(d => d.id === item.id);
     const opacityBase = 0.5 + (configIndex / Math.max(sameBrandConfigs.length - 1, 1)) * 0.5;
 
@@ -310,9 +319,9 @@ export function BubbleChart({
             const normalized = (Math.sqrt(Math.max(0, sales)) - sqrtMin) / sqrtSpan;
             return Math.max(10, Math.min(70, 10 + normalized * 60));
           },
-          animationDuration: 600,
+          animationDuration: 400,
           animationEasing: 'cubicOut',
-          animationDurationUpdate: 600,
+          animationDurationUpdate: 100,
           animationEasingUpdate: 'cubicInOut',
         },
       ],
@@ -325,7 +334,8 @@ export function BubbleChart({
   useEffect(() => {
     if (!chartRef.current) return;
 
-    const chart = echarts.init(chartRef.current, undefined, { renderer: 'svg' });
+    // Canvas 渲染器比 SVG 更适合高频交互场景（dataZoom、graphic 拖拽）
+    const chart = echarts.init(chartRef.current, undefined, { renderer: 'canvas' });
     chartInstance.current = chart;
 
     chart.on('click', (params: any) => {
@@ -337,9 +347,15 @@ export function BubbleChart({
       }
     });
 
+    // resize 防抖：窗口拖拽时只在一段时间后执行 resize
+    let resizeTimeout: ReturnType<typeof setTimeout> | null = null;
     const handleResize = () => {
-      chart.resize();
-      scheduleApplyOverlays();
+      if (resizeTimeout !== null) clearTimeout(resizeTimeout);
+      resizeTimeout = setTimeout(() => {
+        resizeTimeout = null;
+        chart.resize();
+        scheduleApplyOverlays();
+      }, 80);
     };
     window.addEventListener('resize', handleResize);
 
@@ -348,6 +364,7 @@ export function BubbleChart({
 
     return () => {
       window.removeEventListener('resize', handleResize);
+      if (resizeTimeout !== null) clearTimeout(resizeTimeout);
       chart.off('dataZoom', scheduleApplyOverlays);
       chart.off('finished', scheduleApplyOverlays);
       if (overlayRafId.current !== null) {
@@ -421,22 +438,26 @@ export function BubbleChart({
     });
   }, [data]);
 
-  // 四象限：replaceMerge graphic；'mean' 模式实时读取当前可见轴范围
+  // 四象限：首次 replaceMerge 创建，后续只增量更新位置/shape，避免完全重建
   useEffect(() => {
     const clear = () => {
       if (!chartInstance.current) return;
       chartInstance.current.setOption({ graphic: [] }, { replaceMerge: ['graphic'] });
     };
 
+    let isFirstApply = true;
+
     const apply = () => {
       if (!chartInstance.current) return;
       const chart = chartInstance.current;
       if (!quadrant.enabled) {
         clear();
+        isFirstApply = true;
         return;
       }
       if (data.length === 0) {
         clear();
+        isFirstApply = true;
         return;
       }
 
@@ -475,12 +496,14 @@ export function BubbleChart({
 
       if (!Number.isFinite(thresholdX) || !Number.isFinite(thresholdY)) {
         clear();
+        isFirstApply = true;
         return;
       }
 
       const cross = chart.convertToPixel(finder, [thresholdX, thresholdY]) as number[] | undefined;
       if (!cross || !Number.isFinite(cross[0]!) || !Number.isFinite(cross[1]!)) {
         clear();
+        isFirstApply = true;
         return;
       }
       const cx = cross[0]! - gridX;
@@ -526,157 +549,57 @@ export function BubbleChart({
 
       const axisColor = 'rgba(148, 163, 184, 0.92)';
 
-      chart.setOption(
-        {
+      if (isFirstApply) {
+        isFirstApply = false;
+        chart.setOption(
+          {
+            graphic: [
+              {
+                id: 'quadrant-axes',
+                type: 'group' as const,
+                left: gridX,
+                top: gridY,
+                children: [
+                  { id: 'q-rect-premium', type: 'rect' as const, shape: { x: 0, y: 0, width: Math.max(0, cx), height: Math.max(0, cy) }, z2: 0, silent: true, style: { fill: hexToRgba(quadrantInfos.premium.color, 0.08) } as any },
+                  { id: 'q-rect-star', type: 'rect' as const, shape: { x: cx, y: 0, width: Math.max(0, gridW - cx), height: Math.max(0, cy) }, z2: 0, silent: true, style: { fill: hexToRgba(quadrantInfos.star.color, 0.08) } as any },
+                  { id: 'q-rect-edge', type: 'rect' as const, shape: { x: 0, y: cy, width: Math.max(0, cx), height: Math.max(0, gridH - cy) }, z2: 0, silent: true, style: { fill: hexToRgba(quadrantInfos.edge.color, 0.08) } as any },
+                  { id: 'q-rect-volume', type: 'rect' as const, shape: { x: cx, y: cy, width: Math.max(0, gridW - cx), height: Math.max(0, gridH - cy) }, z2: 0, silent: true, style: { fill: hexToRgba(quadrantInfos.volume.color, 0.08) } as any },
+                  { id: 'q-line-v', type: 'line' as const, z2: 1, shape: { x1: cx, y1: 0, x2: cx, y2: gridH }, style: { stroke: axisColor, lineWidth: 2 } as any, draggable: 'horizontal' as const, cursor: 'ew-resize' as const, ondrag: (ev: any) => xManual(ev) },
+                  { id: 'q-line-h', type: 'line' as const, z2: 1, shape: { x1: 0, y1: cy, x2: gridW, y2: cy }, style: { stroke: axisColor, lineWidth: 2 } as any, draggable: 'vertical' as const, cursor: 'ns-resize' as const, ondrag: (ev: any) => yManual(ev) },
+                  { id: 'q-center', type: 'circle' as const, z2: 3, shape: { cx, cy, r: 7 }, style: { fill: 'rgba(20, 22, 27, 0.85)', stroke: '#00D084', lineWidth: 2, shadowBlur: 6, shadowColor: 'rgba(0,0,0,0.4)' } as any, cursor: 'move' as const, draggable: true, ondrag: (ev: any) => bothManual(ev) },
+                  { id: 'q-text-premium', type: 'text' as const, x: cx / 2, y: cy / 2, z2: 2, silent: true, style: { text: '🔵 溢价配置', fill: quadrantInfos.premium.color, fontSize: 11, fontWeight: 500, textAlign: 'center', textVerticalAlign: 'middle' } as any },
+                  { id: 'q-text-star', type: 'text' as const, x: (cx + gridW) / 2, y: cy / 2, z2: 2, silent: true, style: { text: '🟢 量价齐高', fill: quadrantInfos.star.color, fontSize: 11, fontWeight: 500, textAlign: 'center', textVerticalAlign: 'middle' } as any },
+                  { id: 'q-text-edge', type: 'text' as const, x: cx / 2, y: (cy + gridH) / 2, z2: 2, silent: true, style: { text: '⚪ 边缘配置', fill: quadrantInfos.edge.color, fontSize: 11, fontWeight: 500, textAlign: 'center', textVerticalAlign: 'middle' } as any },
+                  { id: 'q-text-volume', type: 'text' as const, x: (cx + gridW) / 2, y: (cy + gridH) / 2, z2: 2, silent: true, style: { text: '🔴 以价换量', fill: quadrantInfos.volume.color, fontSize: 11, fontWeight: 500, textAlign: 'center', textVerticalAlign: 'middle' } as any },
+                ],
+              },
+            ],
+          },
+          { replaceMerge: ['graphic'] },
+        );
+      } else {
+        // 增量更新：只改位置和 shape，不重建元素，避免 Canvas/SVG 频繁创建销毁
+        chart.setOption({
           graphic: [
             {
               id: 'quadrant-axes',
-              type: 'group' as const,
-              left: gridX,
-              top: gridY,
               children: [
-                {
-                  type: 'rect' as const,
-                  shape: { x: 0, y: 0, width: Math.max(0, cx), height: Math.max(0, cy) },
-                  z2: 0,
-                  silent: true,
-                  style: { fill: hexToRgba(quadrantInfos.premium.color, 0.08) } as any,
-                } as any,
-                {
-                  type: 'rect' as const,
-                  shape: { x: cx, y: 0, width: Math.max(0, gridW - cx), height: Math.max(0, cy) },
-                  z2: 0,
-                  silent: true,
-                  style: { fill: hexToRgba(quadrantInfos.star.color, 0.08) } as any,
-                } as any,
-                {
-                  type: 'rect' as const,
-                  shape: { x: 0, y: cy, width: Math.max(0, cx), height: Math.max(0, gridH - cy) },
-                  z2: 0,
-                  silent: true,
-                  style: { fill: hexToRgba(quadrantInfos.edge.color, 0.08) } as any,
-                } as any,
-                {
-                  type: 'rect' as const,
-                  shape: { x: cx, y: cy, width: Math.max(0, gridW - cx), height: Math.max(0, gridH - cy) },
-                  z2: 0,
-                  silent: true,
-                  style: { fill: hexToRgba(quadrantInfos.volume.color, 0.08) } as any,
-                } as any,
-                {
-                  type: 'line' as const,
-                  z2: 1,
-                  shape: { x1: cx, y1: 0, x2: cx, y2: gridH },
-                  style: {
-                    stroke: axisColor,
-                    lineWidth: 2,
-                  } as any,
-                  draggable: 'horizontal' as const,
-                  cursor: 'ew-resize' as const,
-                  ondrag: (ev: { offsetX: number; offsetY: number }) => {
-                    if (!chartInstance.current) return;
-                    xManual(ev);
-                  },
-                } as any,
-                {
-                  type: 'line' as const,
-                  z2: 1,
-                  shape: { x1: 0, y1: cy, x2: gridW, y2: cy },
-                  style: {
-                    stroke: axisColor,
-                    lineWidth: 2,
-                  } as any,
-                  draggable: 'vertical' as const,
-                  cursor: 'ns-resize' as const,
-                  ondrag: (ev: { offsetX: number; offsetY: number }) => {
-                    if (!chartInstance.current) return;
-                    yManual(ev);
-                  },
-                } as any,
-                {
-                  type: 'circle' as const,
-                  z2: 3,
-                  shape: { cx, cy, r: 7 },
-                  style: {
-                    fill: 'rgba(20, 22, 27, 0.85)',
-                    stroke: '#00D084',
-                    lineWidth: 2,
-                    shadowBlur: 6,
-                    shadowColor: 'rgba(0,0,0,0.4)',
-                  } as any,
-                  cursor: 'move' as const,
-                  draggable: true,
-                  ondrag: (ev: { offsetX: number; offsetY: number }) => {
-                    if (!chartInstance.current) return;
-                    bothManual(ev);
-                  },
-                } as any,
-                {
-                  type: 'text' as const,
-                  x: cx / 2,
-                  y: cy / 2,
-                  z2: 2,
-                  silent: true,
-                  style: {
-                    text: '🔵 溢价配置',
-                    fill: quadrantInfos.premium.color,
-                    fontSize: 11,
-                    fontWeight: 500,
-                    textAlign: 'center',
-                    textVerticalAlign: 'middle',
-                  } as any,
-                } as any,
-                {
-                  type: 'text' as const,
-                  x: (cx + gridW) / 2,
-                  y: cy / 2,
-                  z2: 2,
-                  silent: true,
-                  style: {
-                    text: '🟢 量价齐高',
-                    fill: quadrantInfos.star.color,
-                    fontSize: 11,
-                    fontWeight: 500,
-                    textAlign: 'center',
-                    textVerticalAlign: 'middle',
-                  } as any,
-                } as any,
-                {
-                  type: 'text' as const,
-                  x: cx / 2,
-                  y: (cy + gridH) / 2,
-                  z2: 2,
-                  silent: true,
-                  style: {
-                    text: '⚪ 边缘配置',
-                    fill: quadrantInfos.edge.color,
-                    fontSize: 11,
-                    fontWeight: 500,
-                    textAlign: 'center',
-                    textVerticalAlign: 'middle',
-                  } as any,
-                } as any,
-                {
-                  type: 'text' as const,
-                  x: (cx + gridW) / 2,
-                  y: (cy + gridH) / 2,
-                  z2: 2,
-                  silent: true,
-                  style: {
-                    text: '🔴 以价换量',
-                    fill: quadrantInfos.volume.color,
-                    fontSize: 11,
-                    fontWeight: 500,
-                    textAlign: 'center',
-                    textVerticalAlign: 'middle',
-                  } as any,
-                } as any,
+                { id: 'q-rect-premium', shape: { width: Math.max(0, cx), height: Math.max(0, cy) } },
+                { id: 'q-rect-star', shape: { x: cx, width: Math.max(0, gridW - cx), height: Math.max(0, cy) } },
+                { id: 'q-rect-edge', shape: { y: cy, width: Math.max(0, cx), height: Math.max(0, gridH - cy) } },
+                { id: 'q-rect-volume', shape: { x: cx, y: cy, width: Math.max(0, gridW - cx), height: Math.max(0, gridH - cy) } },
+                { id: 'q-line-v', shape: { x1: cx, x2: cx } },
+                { id: 'q-line-h', shape: { y1: cy, y2: cy } },
+                { id: 'q-center', shape: { cx, cy } },
+                { id: 'q-text-premium', x: cx / 2, y: cy / 2 },
+                { id: 'q-text-star', x: (cx + gridW) / 2, y: cy / 2 },
+                { id: 'q-text-edge', x: cx / 2, y: (cy + gridH) / 2 },
+                { id: 'q-text-volume', x: (cx + gridW) / 2, y: (cy + gridH) / 2 },
               ],
             },
           ],
-        },
-        { replaceMerge: ['graphic'] },
-      );
+        });
+      }
     };
 
     applyQuadrantOverlaysRef.current = apply;
@@ -709,20 +632,33 @@ export function BubbleChart({
   const [legendCollapsed, setLegendCollapsed] = useState(false);
   const [legendOffset, setLegendOffset] = useState({ x: 0, y: 0 });
 
+  // 图例面板拖拽：拖拽过程中直接操作 DOM，不触发 React 重渲染；mouseup 后再同步 state
+  const legendPanelRef = useRef<HTMLDivElement | null>(null);
+  const legendCollapsedBtnRef = useRef<HTMLButtonElement | null>(null);
+
   const handleLegendDrag = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
     const startX = e.clientX;
     const startY = e.clientY;
     const initialX = legendOffset.x;
     const initialY = legendOffset.y;
+    let lastX = initialX;
+    let lastY = initialY;
+
     const onMove = (ev: MouseEvent) => {
-      setLegendOffset({
-        x: initialX + (ev.clientX - startX),
-        y: initialY + (ev.clientY - startY),
-      });
+      lastX = initialX + (ev.clientX - startX);
+      lastY = initialY + (ev.clientY - startY);
+      // 直接修改 DOM，绕过 React 渲染管线
+      const panel = legendPanelRef.current;
+      if (panel) {
+        panel.style.top = `${LEGEND_BASE_TOP + lastY}px`;
+        panel.style.right = `${LEGEND_BASE_RIGHT - lastX}px`;
+      }
     };
     const onUp = () => {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
+      setLegendOffset({ x: lastX, y: lastY });
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
@@ -759,10 +695,11 @@ export function BubbleChart({
       {highlightedBrands.length > 0 && (
         legendCollapsed ? (
           <button
+            ref={legendCollapsedBtnRef}
             className="absolute flex items-center justify-center w-7 h-7 rounded-full cursor-pointer"
             style={{
-              top: GRID.top + 8 + legendOffset.y,
-              right: GRID.right + 14 - legendOffset.x,
+              top: LEGEND_BASE_TOP + legendOffset.y,
+              right: LEGEND_BASE_RIGHT - legendOffset.x,
               backgroundColor: 'rgba(20, 22, 27, 0.9)',
               backdropFilter: 'blur(8px)',
               border: '1px solid var(--border-subtle)',
@@ -775,10 +712,11 @@ export function BubbleChart({
           </button>
         ) : (
           <div
+            ref={legendPanelRef}
             className="absolute rounded-lg overflow-hidden"
             style={{
-              top: GRID.top + 8 + legendOffset.y,
-              right: GRID.right + 14 - legendOffset.x,
+              top: LEGEND_BASE_TOP + legendOffset.y,
+              right: LEGEND_BASE_RIGHT - legendOffset.x,
               backgroundColor: 'rgba(20, 22, 27, 0.9)',
               backdropFilter: 'blur(8px)',
               border: '1px solid var(--border-subtle)',

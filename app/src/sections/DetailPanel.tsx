@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import * as echarts from 'echarts';
-import { X, TrendingUp, TrendingDown } from 'lucide-react';
+import { X, TrendingUp, TrendingDown, ExternalLink } from 'lucide-react';
 import type { ConfigVersion, QuadrantType } from '@/types';
 import { quadrantInfos } from '@/data/mockData';
+import { fetchSeriesConfig } from '@/api/bubblechartClient';
+import type { SeriesConfigData } from '@/api/backendContract';
 
 interface DetailPanelProps {
   config: ConfigVersion | null;
@@ -83,6 +85,8 @@ export function DetailPanel({
   onSelectConfig,
 }: DetailPanelProps) {
   const brandMatrixRef = useRef<HTMLDivElement>(null);
+  const [seriesConfig, setSeriesConfig] = useState<SeriesConfigData | null>(null);
+  const [seriesConfigLoading, setSeriesConfigLoading] = useState(false);
 
   const qType: QuadrantType = config
     ? getQuadrant(
@@ -308,6 +312,25 @@ export function DetailPanel({
     yField,
   ]);
 
+  // 拉取车系配置数据
+  useEffect(() => {
+    if (!config?.carSeriesId) {
+      setSeriesConfig(null);
+      return;
+    }
+    setSeriesConfigLoading(true);
+    fetchSeriesConfig(config.carSeriesId)
+      .then((res) => {
+        if (res.ok) {
+          setSeriesConfig(res.data);
+        } else {
+          setSeriesConfig(null);
+        }
+      })
+      .catch(() => setSeriesConfig(null))
+      .finally(() => setSeriesConfigLoading(false));
+  }, [config?.carSeriesId]);
+
   if (!config) return null;
 
   // 同价位竞品（±15%）
@@ -432,6 +455,162 @@ export function DetailPanel({
             </div>
           )}
         </div>
+
+        {/* 懂车帝外链 */}
+        {config.carSeriesId && (
+          <div
+            className="rounded-lg p-3 flex items-center gap-3"
+            style={{
+              backgroundColor: 'var(--bg-elevated)',
+              border: '1px solid var(--border-subtle)',
+            }}
+          >
+            <div className="flex-1 min-w-0">
+              <div className="text-xs mb-1.5" style={{ color: 'var(--text-muted)' }}>
+                懂车帝车系 ID
+              </div>
+              <div className="text-sm font-mono" style={{ color: 'var(--text-primary)' }}>
+                {config.carSeriesId}
+              </div>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <a
+                href={`https://www.dongchedi.com/auto/series/${config.carSeriesId}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1 px-2.5 py-1 rounded text-xs transition-colors"
+                style={{
+                  backgroundColor: 'rgba(59, 130, 246, 0.12)',
+                  color: '#3B82F6',
+                }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLElement).style.backgroundColor = 'rgba(59, 130, 246, 0.2)';
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLElement).style.backgroundColor = 'rgba(59, 130, 246, 0.12)';
+                }}
+              >
+                <ExternalLink className="w-3 h-3" />
+                车系详情
+              </a>
+              <a
+                href={`https://www.dongchedi.com/auto/params-carIds-x-${config.carSeriesId}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1 px-2.5 py-1 rounded text-xs transition-colors"
+                style={{
+                  backgroundColor: 'rgba(0, 208, 132, 0.12)',
+                  color: '#00D084',
+                }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLElement).style.backgroundColor = 'rgba(0, 208, 132, 0.2)';
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLElement).style.backgroundColor = 'rgba(0, 208, 132, 0.12)';
+                }}
+              >
+                <ExternalLink className="w-3 h-3" />
+                参数配置
+              </a>
+            </div>
+          </div>
+        )}
+
+        {/* 车系参数配置 */}
+        {seriesConfig && (
+          <div
+            className="rounded-lg p-4"
+            style={{
+              backgroundColor: 'var(--bg-elevated)',
+              border: '1px solid var(--border-subtle)',
+            }}
+          >
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                参数配置
+              </h3>
+              <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                {seriesConfigLoading ? '加载中...' : `来源: 懂车帝 · ${seriesConfig.configs_count || 0}款配置`}
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+              {seriesConfig.cltc_range !== undefined && (
+                <div className="flex items-center justify-between">
+                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>CLTC续航</span>
+                  <span className="text-xs font-mono font-medium" style={{ color: 'var(--text-primary)' }}>{seriesConfig.cltc_range} km</span>
+                </div>
+              )}
+              {seriesConfig.battery_capacity !== undefined && (
+                <div className="flex items-center justify-between">
+                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>电池容量</span>
+                  <span className="text-xs font-mono font-medium" style={{ color: 'var(--text-primary)' }}>{seriesConfig.battery_capacity} kWh</span>
+                </div>
+              )}
+              {seriesConfig.motor_power_kw !== undefined && (
+                <div className="flex items-center justify-between">
+                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>电机功率</span>
+                  <span className="text-xs font-mono font-medium" style={{ color: 'var(--text-primary)' }}>{seriesConfig.motor_power_kw} kW</span>
+                </div>
+              )}
+              {seriesConfig.motor_torque_nm !== undefined && (
+                <div className="flex items-center justify-between">
+                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>电机扭矩</span>
+                  <span className="text-xs font-mono font-medium" style={{ color: 'var(--text-primary)' }}>{seriesConfig.motor_torque_nm} N·m</span>
+                </div>
+              )}
+              {seriesConfig.max_speed !== undefined && (
+                <div className="flex items-center justify-between">
+                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>最高车速</span>
+                  <span className="text-xs font-mono font-medium" style={{ color: 'var(--text-primary)' }}>{seriesConfig.max_speed} km/h</span>
+                </div>
+              )}
+              {seriesConfig.zero_to_hundred !== undefined && (
+                <div className="flex items-center justify-between">
+                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>百公里加速</span>
+                  <span className="text-xs font-mono font-medium" style={{ color: 'var(--text-primary)' }}>{seriesConfig.zero_to_hundred}s</span>
+                </div>
+              )}
+              {seriesConfig.length !== undefined && (
+                <div className="flex items-center justify-between">
+                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>长×宽×高</span>
+                  <span className="text-xs font-mono font-medium" style={{ color: 'var(--text-primary)' }}>
+                    {seriesConfig.length}×{seriesConfig.width}×{seriesConfig.height} mm
+                  </span>
+                </div>
+              )}
+              {seriesConfig.wheelbase !== undefined && (
+                <div className="flex items-center justify-between">
+                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>轴距</span>
+                  <span className="text-xs font-mono font-medium" style={{ color: 'var(--text-primary)' }}>{seriesConfig.wheelbase} mm</span>
+                </div>
+              )}
+              {seriesConfig.drive_type && (
+                <div className="flex items-center justify-between">
+                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>驱动方式</span>
+                  <span className="text-xs font-medium" style={{ color: 'var(--text-primary)' }}>{seriesConfig.drive_type}</span>
+                </div>
+              )}
+              {seriesConfig.assistance_level && (
+                <div className="flex items-center justify-between">
+                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>辅助驾驶</span>
+                  <span className="text-xs font-medium" style={{ color: 'var(--text-primary)' }}>{seriesConfig.assistance_level}</span>
+                </div>
+              )}
+              {seriesConfig.chip && (
+                <div className="flex items-center justify-between">
+                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>智驾芯片</span>
+                  <span className="text-xs font-medium" style={{ color: 'var(--text-primary)' }}>{seriesConfig.chip}</span>
+                </div>
+              )}
+              {seriesConfig.energy_type && (
+                <div className="flex items-center justify-between">
+                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>能源类型</span>
+                  <span className="text-xs font-medium" style={{ color: 'var(--text-primary)' }}>{seriesConfig.energy_type}</span>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* 当前象限解读 */}
         <div

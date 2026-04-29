@@ -13,6 +13,7 @@ from bubblechart_backend.config import Config, load_config
 from bubblechart_backend import db as dbutil
 from bubblechart_backend import dongchedi_sales
 from bubblechart_backend import crawler
+from bubblechart_backend import series_config_crawler
 
 DEFAULT_CHART_CONFIG: dict[str, Any] = {
     "xAxisRange": {"min": 15, "max": 60},
@@ -326,6 +327,65 @@ def create_app(config: Optional[Config] = None) -> Flask:
             "ok": True,
             "brands": _list_known_brands(cfg),
             "palette": DEFAULT_BRAND_PALETTE,
+        })
+
+    # ------------------------------------------------------------------
+    # 车系配置数据 API
+    # ------------------------------------------------------------------
+    @app.route("/api/series_config", methods=["GET"])
+    def series_config():
+        """
+        获取车系配置数据。
+        Query: series_id=20154
+        优先从数据库读取；如果没有则实时抓取（可配 refresh=1 强制刷新）
+        """
+        series_id = request.args.get("series_id", "").strip()
+        if not series_id:
+            return jsonify({"ok": False, "error": "缺少 series_id 参数"}), 400
+
+        refresh = request.args.get("refresh", "0").strip() == "1"
+
+        # 先查数据库（除非强制刷新）
+        if not refresh and dbutil.db_exists(cfg.db_path):
+            cached = series_config_crawler.get_series_config(cfg.db_path, series_id)
+            if cached:
+                return jsonify({"ok": True, "source": "cache", "data": cached})
+
+        # 实时抓取
+        data = series_config_crawler.fetch_series_config(series_id)
+        if data and not data.get("error"):
+            # 保存到数据库
+            if dbutil.db_exists(cfg.db_path):
+                series_config_crawler.save_series_config(cfg.db_path, data)
+            return jsonify({"ok": True, "source": "live", "data": data})
+
+        return jsonify({
+            "ok": False,
+            "error": data.get("error", "抓取失败") if data else "未知错误",
+        }), 502
+
+    @app.route("/api/series_config/batch_crawl", methods=["POST"])
+    def batch_crawl_series_config():
+        """
+        批量抓取缺失的车系配置数据。
+        Body JSON: {"series_ids": ["20154", "12345"]}
+        """
+        body = request.get_json(silent=True) or {}
+        series_ids = body.get("series_ids", [])
+        if not series_ids or not isinstance(series_ids, list):
+            return jsonify({"ok": False, "error": "series_ids 必须是字符串数组"}), 400
+
+        if not dbutil.db_exists(cfg.db_path):
+            return jsonify({"ok": False, "error": "数据库不存在"}), 400
+
+        success, failed = series_config_crawler.batch_crawl_missing_configs(
+            cfg.db_path, series_ids, force_refresh=False
+        )
+        return jsonify({
+            "ok": True,
+            "success": success,
+            "failed": failed,
+            "total": len(series_ids),
         })
 
     @app.route("/api/delete_month", methods=["POST"])

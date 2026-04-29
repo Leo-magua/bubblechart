@@ -11,6 +11,7 @@ import type {
   PreviewResponse,
   FetchResponse,
   UpdateChartConfigResponse,
+  SeriesConfigResponse,
 } from '@/api/backendContract';
 
 function apiBaseUrl(): string {
@@ -138,6 +139,14 @@ export async function fetchBrands(): Promise<BrandsResponse | HttpErr> {
 /** GET /api/preview */
 export async function fetchPreview(): Promise<PreviewResponse | HttpErr> {
   return requestJson<PreviewResponse>('/api/preview', { method: 'GET' });
+}
+
+/** GET /api/series_config?series_id=xxx */
+export async function fetchSeriesConfig(seriesId: string, refresh?: boolean): Promise<SeriesConfigResponse | HttpErr> {
+  const q = new URLSearchParams();
+  q.set('series_id', seriesId);
+  if (refresh) q.set('refresh', '1');
+  return requestJson<SeriesConfigResponse>(`/api/series_config?${q.toString()}`, { method: 'GET' });
 }
 
 /** POST /api/fetch */

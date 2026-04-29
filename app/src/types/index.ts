@@ -1,5 +1,6 @@
 export interface ConfigVersion {
   id: string;
+  carSeriesId?: string;
   brand: string;
   brandColor: string;
   model: string;

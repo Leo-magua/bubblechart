@@ -215,6 +215,7 @@ def _row_to_config_version(rec: Dict[str, Any], month_iso: str) -> Dict[str, Any
 
     return {
         "id": rid,
+        "carSeriesId": seriesid or None,
         "brand": brand,
         "brandColor": brand_color_for(brand),
         "model": model,

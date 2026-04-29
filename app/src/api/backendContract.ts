@@ -111,6 +111,40 @@ export type UpdateChartConfigResponse = HttpOk<{
   config: ChartAdminConfig;
 }>;
 
+/** GET /api/series_config?series_id=xxx */
+export type SeriesConfigData = {
+  series_id?: string;
+  series_name?: string;
+  configs_count?: number;
+  cltc_range?: number;
+  battery_capacity?: number;
+  motor_power_kw?: number;
+  motor_torque_nm?: number;
+  max_speed?: number;
+  length?: number;
+  width?: number;
+  height?: number;
+  wheelbase?: number;
+  curb_weight?: number;
+  drive_type?: string;
+  assistance_level?: string;
+  chip?: string;
+  radar_lidar?: string;
+  fast_charge_time?: string;
+  slow_charge_time?: string;
+  energy_type?: string;
+  zero_to_hundred?: number;
+  front_suspension?: string;
+  rear_suspension?: string;
+  crawled_at?: string;
+  [key: string]: unknown;
+};
+
+export type SeriesConfigResponse = HttpOk<{
+  source: 'cache' | 'live';
+  data: SeriesConfigData;
+}>;
+
 export type AnyApiResponse =
   | HealthResponse
   | MonthsResponse
@@ -122,4 +156,5 @@ export type AnyApiResponse =
   | PreviewResponse
   | FetchResponse
   | UpdateChartConfigResponse
+  | SeriesConfigResponse
   | HttpErr;
