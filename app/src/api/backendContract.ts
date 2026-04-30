@@ -111,6 +111,17 @@ export type UpdateChartConfigResponse = HttpOk<{
   config: ChartAdminConfig;
 }>;
 
+/** GET /api/availability */
+export type AvailabilityResponse = HttpOk<{
+  latest_available_month: string;   // YYYY-MM
+  current_month: string;            // YYYY-MM
+  current_month_published: boolean;
+  next_release_month: string;       // YYYY-MM
+  next_release_date: string;        // YYYY-MM-DD
+  db_months: string[];
+  note: string;
+}>;
+
 /** GET /api/series_config?series_id=xxx */
 export type SeriesConfigData = {
   series_id?: string;

@@ -2,6 +2,12 @@ import { Database, RefreshCw, Upload, Compass, ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { MonthSelector } from '@/sections/MonthSelector';
 
+interface AvailabilityInfo {
+  latestAvailableMonth: string;
+  currentMonthPublished: boolean;
+  nextReleaseMonth: string;
+}
+
 interface NavbarProps {
   monthOptions: string[];
   selectedMonthIso: string;
@@ -12,6 +18,7 @@ interface NavbarProps {
   onRefresh?: () => void;
   onImport?: () => void;
   isRefreshing: boolean;
+  availabilityInfo?: AvailabilityInfo;
 }
 
 export function Navbar({
@@ -24,6 +31,7 @@ export function Navbar({
   onRefresh,
   onImport,
   isRefreshing,
+  availabilityInfo,
 }: NavbarProps) {
   return (
     <nav
@@ -59,6 +67,7 @@ export function Navbar({
             selectedMonthIso={selectedMonthIso}
             onMonthChange={onMonthChange}
             disabled={isRefreshing || monthOptions.length === 0}
+            availabilityInfo={availabilityInfo}
           />
         </div>
       </div>

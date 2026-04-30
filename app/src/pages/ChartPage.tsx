@@ -6,6 +6,7 @@ import {
   fetchChartConfig,
   fetchMonths,
   fetchSales,
+  fetchAvailability,
   postImportFile,
   formatMonthLabelCn,
   salesSourceToLabel,
@@ -45,6 +46,11 @@ export default function ChartPage() {
   });
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isImportOpen, setIsImportOpen] = useState(false);
+  const [availabilityInfo, setAvailabilityInfo] = useState<{
+    latestAvailableMonth: string;
+    currentMonthPublished: boolean;
+    nextReleaseMonth: string;
+  } | null>(null);
 
 
   const closeImportModal = useCallback(() => setIsImportOpen(false), []);
@@ -74,19 +80,55 @@ export default function ChartPage() {
       return true;
     }
 
+    // 数据为空：检查是否是因为该月份数据尚未发布
     setData([]);
     setCurrentMonthIso(month);
-    setDataSourceLabel('懂车帝（无记录）');
+
+    if (availabilityInfo && month > availabilityInfo.latestAvailableMonth) {
+      const nextMonth = availabilityInfo.nextReleaseMonth.slice(5, 7);
+      setDataSourceLabel(`懂车帝（${month}数据预计${nextMonth}月10日后更新）`);
+      if (!options?.silent) {
+        toast.info(`${month} 销量数据预计 ${nextMonth}月10日 后在懂车帝更新，当前展示为空。可切换到 ${availabilityInfo.latestAvailableMonth} 查看最新数据。`);
+      }
+    } else {
+      setDataSourceLabel('懂车帝（无记录）');
+    }
     return true;
-  }, []);
+  }, [availabilityInfo]);
 
   const bootstrap = useCallback(async () => {
-    const monthsRes = await fetchMonths();
+    // 并行获取月份列表和可用性信息
+    const [monthsRes, availRes] = await Promise.all([
+      fetchMonths(),
+      fetchAvailability(),
+    ]);
+
     const apiMonths = monthsRes.ok ? monthsRes.months : [];
-    const list = apiMonths.length > 0 ? apiMonths : [FALLBACK_MONTH];
+
+    // 获取最新可用月份（考虑懂车帝滞后规律）
+    let latestAvailable = FALLBACK_MONTH;
+    if (availRes.ok) {
+      setAvailabilityInfo({
+        latestAvailableMonth: availRes.latest_available_month,
+        currentMonthPublished: availRes.current_month_published,
+        nextReleaseMonth: availRes.next_release_month,
+      });
+      latestAvailable = availRes.latest_available_month;
+    }
+
+    // 构建月份选项：数据库已有月份 + 当前月（即使还没数据，也展示给用户）
+    const currentMonth = new Date().toISOString().slice(0, 7); // YYYY-MM
+    const listSet = new Set([...apiMonths]);
+    if (!listSet.has(currentMonth)) {
+      listSet.add(currentMonth);
+    }
+    // 按降序排列（最新月份在前）
+    const list = Array.from(listSet).sort((a, b) => b.localeCompare(a));
     setAvailableMonths(list);
-    const initialMonth = list[0] ?? FALLBACK_MONTH;
-    await loadSalesForMonth(initialMonth, { silent: false });
+
+    // 默认加载最新可用月份的数据
+    const targetMonth = apiMonths.includes(latestAvailable) ? latestAvailable : (apiMonths[0] ?? FALLBACK_MONTH);
+    await loadSalesForMonth(targetMonth, { silent: false });
   }, [loadSalesForMonth]);
 
   useEffect(() => {
@@ -293,6 +335,7 @@ export default function ChartPage() {
         onRefresh={handleRefresh}
         onImport={() => setIsImportOpen(true)}
         isRefreshing={isRefreshing}
+        availabilityInfo={availabilityInfo ?? undefined}
       />
 
       <PresetBar

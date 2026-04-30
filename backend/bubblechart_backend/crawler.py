@@ -42,6 +42,33 @@ def get_month_list(start: str, end: str) -> List[str]:
     return months
 
 
+def get_latest_available_month(reference: Optional[datetime] = None) -> str:
+    """
+    懂车帝销量榜数据滞后一个月，通常在下个月 10 号后更新。
+    返回当前能抓到的最新月份（YYYYMM）。
+    例如：4月29日 → 返回 202603（3月数据）
+    """
+    now = reference or datetime.now()
+    # 上个月
+    if now.month == 1:
+        year = now.year - 1
+        month = 12
+    else:
+        year = now.year
+        month = now.month - 1
+    return f"{year}{month:02d}"
+
+
+def month_to_iso(month_YYYYMM: str) -> str:
+    """YYYYMM → YYYY-MM"""
+    return f"{month_YYYYMM[:4]}-{month_YYYYMM[4:]}"
+
+
+def iso_to_month(month_iso: str) -> str:
+    """YYYY-MM → YYYYMM"""
+    return month_iso.replace("-", "")
+
+
 def create_table_if_not_exists(conn: sqlite3.Connection, table_name: str) -> None:
     cursor = conn.cursor()
     cursor.execute(f"""

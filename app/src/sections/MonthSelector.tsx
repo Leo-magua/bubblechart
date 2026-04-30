@@ -1,5 +1,5 @@
 import { useMemo, useState, useCallback } from 'react';
-import { Check, ChevronDown, ChevronLeft, ChevronRight, CalendarDays } from 'lucide-react';
+import { Check, ChevronDown, ChevronLeft, ChevronRight, CalendarDays, Clock } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -18,11 +18,18 @@ import {
 } from '@/components/ui/command';
 import { formatMonthLabelCn } from '@/api/bubblechartClient';
 
+interface AvailabilityInfo {
+  latestAvailableMonth: string;
+  currentMonthPublished: boolean;
+  nextReleaseMonth: string;
+}
+
 interface MonthSelectorProps {
   monthOptions: string[];
   selectedMonthIso: string;
   onMonthChange: (monthIso: string) => void;
   disabled?: boolean;
+  availabilityInfo?: AvailabilityInfo;
 }
 
 function groupMonthsByYear(months: string[]): Record<string, string[]> {
@@ -43,6 +50,7 @@ export function MonthSelector({
   selectedMonthIso,
   onMonthChange,
   disabled = false,
+  availabilityInfo,
 }: MonthSelectorProps) {
   const [open, setOpen] = useState(false);
 
@@ -136,6 +144,25 @@ export function MonthSelector({
                             最新
                           </Badge>
                         )}
+                        {/* 数据可用状态 */}
+                        {availabilityInfo && (() => {
+                          const hasData = monthOptions.includes(iso);
+                          const isFuture = iso > availabilityInfo.latestAvailableMonth;
+                          if (hasData) return null;
+                          if (isFuture) {
+                            return (
+                              <span className="flex items-center gap-1 text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                                <Clock className="h-2.5 w-2.5" />
+                                预计{availabilityInfo.nextReleaseMonth.slice(5, 7)}月10日
+                              </span>
+                            );
+                          }
+                          return (
+                            <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4" style={{ borderColor: 'var(--accent-warning)', color: 'var(--accent-warning)' }}>
+                              无数据
+                            </Badge>
+                          );
+                        })()}
                       </CommandItem>
                     );
                   })}

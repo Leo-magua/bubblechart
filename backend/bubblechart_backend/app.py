@@ -173,6 +173,46 @@ def create_app(config: Optional[Config] = None) -> Flask:
         months_list = dbutil.list_dongchedi_style_months(cfg.db_path)
         return jsonify({"ok": True, "months": months_list})
 
+    @app.route("/api/availability", methods=["GET"])
+    def availability():
+        """
+        返回数据可用性信息。
+        懂车帝销量榜滞后一个月，通常下个月 10 号后更新。
+        """
+        import datetime
+        now = datetime.datetime.now()
+        latest_available = crawler.get_latest_available_month(now)
+        latest_available_iso = crawler.month_to_iso(latest_available)
+
+        # 当前月（可能还没发布）
+        current_month = now.strftime("%Y%m")
+        current_month_iso = crawler.month_to_iso(current_month)
+
+        # 数据库中已有的月份
+        db_months = dbutil.list_dongchedi_style_months(cfg.db_path)
+
+        # 下个月预计发布时间
+        if now.month == 12:
+            next_release = datetime.datetime(now.year + 1, 1, 10)
+            next_release_month = f"{now.year + 1}-01"
+        else:
+            next_release = datetime.datetime(now.year, now.month + 1, 10)
+            next_release_month = f"{now.year}-{now.month + 1:02d}"
+
+        # 当前月数据是否已经发布（当前日期 >= 下个月10号）
+        current_month_published = now >= next_release
+
+        return jsonify({
+            "ok": True,
+            "latest_available_month": latest_available_iso,
+            "current_month": current_month_iso,
+            "current_month_published": current_month_published,
+            "next_release_month": next_release_month,
+            "next_release_date": next_release.strftime("%Y-%m-%d"),
+            "db_months": db_months,
+            "note": "懂车帝销量榜数据滞后一个月，通常每月10号后更新上月数据",
+        })
+
     @app.route("/api/sales", methods=["GET"])
     def sales():
         month = request.args.get("month", "").strip()
@@ -243,7 +283,7 @@ def create_app(config: Optional[Config] = None) -> Flask:
         触发懂车帝销量榜抓取。
         Body JSON:
         {
-            "months": ["202508"],      // 可选，默认当前月
+            "months": ["202508"],      // 可选，默认上个月（懂车帝滞后一个月）
             "headless": true           // 可选
         }
         """
@@ -256,8 +296,8 @@ def create_app(config: Optional[Config] = None) -> Flask:
         if not months and start_month and end_month:
             months = crawler.get_month_list(start_month, end_month)
         elif not months:
-            now = __import__("datetime").datetime.now()
-            months = [now.strftime("%Y%m")]
+            # 懂车帝销量榜滞后一个月，默认抓取上个月
+            months = [crawler.get_latest_available_month()]
 
         # 校验格式
         for m in months:

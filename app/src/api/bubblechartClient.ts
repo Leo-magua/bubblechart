@@ -12,6 +12,7 @@ import type {
   FetchResponse,
   UpdateChartConfigResponse,
   SeriesConfigResponse,
+  AvailabilityResponse,
 } from '@/api/backendContract';
 
 function apiBaseUrl(): string {
@@ -147,6 +148,11 @@ export async function fetchSeriesConfig(seriesId: string, refresh?: boolean): Pr
   q.set('series_id', seriesId);
   if (refresh) q.set('refresh', '1');
   return requestJson<SeriesConfigResponse>(`/api/series_config?${q.toString()}`, { method: 'GET' });
+}
+
+/** GET /api/availability */
+export async function fetchAvailability(): Promise<AvailabilityResponse | HttpErr> {
+  return requestJson<AvailabilityResponse>('/api/availability', { method: 'GET' });
 }
 
 /** POST /api/fetch */
