@@ -416,7 +416,6 @@ export function BubbleChart({
         {
           type: 'inside',
           xAxisIndex: 0,
-          zoomOnMouseWheel: false,
         },
         {
           type: 'inside',
@@ -521,10 +520,16 @@ export function BubbleChart({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeBrand, selectedId]);
 
-  // dataZoom 初始范围：避免硬编码在 buildOption 中导致每次重绘重置用户手动调整
+  // dataZoom 初始范围：覆盖全部数据（×1.08 留边），避免高销量/高价车型被裁出可视区
+  // 仅在数据指纹 or preset.id 真实变化时重置 zoom，避免用户拖动后被 useEffect 拉回
+  const lastZoomResetKey = useRef<string>('');
   useEffect(() => {
     const chart = chartInstance.current;
     if (!chart) return;
+
+    const resetKey = `${preset.id}|${data.length}|${data[0]?.id ?? ''}|${data[data.length - 1]?.id ?? ''}`;
+    if (lastZoomResetKey.current === resetKey) return;
+    lastZoomResetKey.current = resetKey;
 
     const salesValues = data
       .map(item => item.sales)
@@ -533,26 +538,17 @@ export function BubbleChart({
       .map(item => item.price)
       .filter((price): price is number => Number.isFinite(price) && price > 0);
 
-    function getSmartMax(vals: number[], hardMin: number): number {
-      if (vals.length === 0) return hardMin;
-      const sorted = [...vals].sort((a, b) => a - b);
-      const p95 = sorted[Math.max(0, Math.ceil(0.95 * sorted.length) - 1)];
-      const max = sorted[sorted.length - 1];
-      if (max <= p95 * 1.5) return Math.ceil(max * 1.08);
-      return Math.max(hardMin, Math.ceil(p95 * 1.5));
-    }
-
-    const priceSmartMax = getSmartMax(priceVals, 100);
-    const salesSmartMax = getSmartMax(salesValues, 20000);
+    const priceMax = priceVals.length ? Math.ceil(Math.max(...priceVals) * 1.08) : (preset.xAxis.max ?? 100);
+    const salesMax = salesValues.length ? Math.ceil(Math.max(...salesValues) * 1.08) : (preset.yAxis.max ?? 50000);
 
     chart.dispatchAction({
       type: 'dataZoom',
       batch: [
-        { dataZoomIndex: 0, startValue: 0, endValue: priceSmartMax },
-        { dataZoomIndex: 1, startValue: 0, endValue: salesSmartMax },
+        { dataZoomIndex: 0, startValue: preset.xAxis.min ?? 0, endValue: priceMax },
+        { dataZoomIndex: 1, startValue: preset.yAxis.min ?? 0, endValue: salesMax },
       ],
     });
-  }, [data]);
+  }, [data, preset]);
 
   // 四象限：首次 replaceMerge 创建，后续只增量更新位置/shape，避免完全重建
   useEffect(() => {
