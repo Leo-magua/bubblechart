@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect } from 'react';
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router';
 import { toast, Toaster } from 'sonner';
 import type { ChartAdminConfig, ConfigVersion, QuadrantState } from '@/types';
@@ -30,6 +30,26 @@ const DEFAULT_CHART_CONFIG: ChartAdminConfig = {
   showUnselectedBrands: true,
 };
 
+interface AvailabilityInfo {
+  latestAvailableMonth: string;
+  currentMonthPublished: boolean;
+  nextReleaseMonth: string;
+}
+
+function currentLocalMonthIso(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function nextMonthIso(monthIso: string): string {
+  const match = /^(\d{4})-(\d{2})$/.exec(monthIso);
+  if (!match) return monthIso;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  if (month === 12) return `${year + 1}-01`;
+  return `${year}-${String(month + 1).padStart(2, '0')}`;
+}
+
 export default function ChartPage() {
   const navigate = useNavigate();
   const [data, setData] = useState<ConfigVersion[]>(mockData);
@@ -46,11 +66,8 @@ export default function ChartPage() {
   });
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isImportOpen, setIsImportOpen] = useState(false);
-  const [availabilityInfo, setAvailabilityInfo] = useState<{
-    latestAvailableMonth: string;
-    currentMonthPublished: boolean;
-    nextReleaseMonth: string;
-  } | null>(null);
+  const [availabilityInfo, setAvailabilityInfo] = useState<AvailabilityInfo | null>(null);
+  const availabilityInfoRef = useRef<AvailabilityInfo | null>(null);
 
 
   const closeImportModal = useCallback(() => setIsImportOpen(false), []);
@@ -84,17 +101,18 @@ export default function ChartPage() {
     setData([]);
     setCurrentMonthIso(month);
 
-    if (availabilityInfo && month > availabilityInfo.latestAvailableMonth) {
-      const nextMonth = availabilityInfo.nextReleaseMonth.slice(5, 7);
-      setDataSourceLabel(`懂车帝（${month}数据预计${nextMonth}月10日后更新）`);
+    const latestAvailabilityInfo = availabilityInfoRef.current;
+    if (latestAvailabilityInfo && month > latestAvailabilityInfo.latestAvailableMonth) {
+      const releaseMonth = nextMonthIso(month).slice(5, 7);
+      setDataSourceLabel(`懂车帝（${month}数据预计${releaseMonth}月10日后更新）`);
       if (!options?.silent) {
-        toast.info(`${month} 销量数据预计 ${nextMonth}月10日 后在懂车帝更新，当前展示为空。可切换到 ${availabilityInfo.latestAvailableMonth} 查看最新数据。`);
+        toast.info(`${month} 销量数据预计 ${releaseMonth}月10日 后在懂车帝更新，当前展示为空。可切换到 ${latestAvailabilityInfo.latestAvailableMonth} 查看最新数据。`);
       }
     } else {
       setDataSourceLabel('懂车帝（无记录）');
     }
     return true;
-  }, [availabilityInfo]);
+  }, []);
 
   const bootstrap = useCallback(async () => {
     // 并行获取月份列表和可用性信息
@@ -108,16 +126,18 @@ export default function ChartPage() {
     // 获取最新可用月份（考虑懂车帝滞后规律）
     let latestAvailable = FALLBACK_MONTH;
     if (availRes.ok) {
-      setAvailabilityInfo({
+      const nextAvailabilityInfo = {
         latestAvailableMonth: availRes.latest_available_month,
         currentMonthPublished: availRes.current_month_published,
         nextReleaseMonth: availRes.next_release_month,
-      });
+      };
+      availabilityInfoRef.current = nextAvailabilityInfo;
+      setAvailabilityInfo(nextAvailabilityInfo);
       latestAvailable = availRes.latest_available_month;
     }
 
     // 构建月份选项：数据库已有月份 + 当前月（即使还没数据，也展示给用户）
-    const currentMonth = new Date().toISOString().slice(0, 7); // YYYY-MM
+    const currentMonth = currentLocalMonthIso();
     const listSet = new Set([...apiMonths]);
     if (!listSet.has(currentMonth)) {
       listSet.add(currentMonth);
@@ -223,7 +243,7 @@ export default function ChartPage() {
         yAxis: { ...preset.yAxis, min: yMin, max: yMax },
       };
     });
-  }, [chartConfig.salesRange?.max, chartConfig.salesRange?.min, chartConfig.xAxisRange?.max, chartConfig.xAxisRange?.min, data]);
+  }, [chartConfig.salesRange, chartConfig.xAxisRange, data]);
 
   const preset = useMemo(
     () => configuredPresets.find(p => p.id === activePreset) || configuredPresets[0],
@@ -266,10 +286,26 @@ export default function ChartPage() {
   const handleRefresh = useCallback(async () => {
     setIsRefreshing(true);
     try {
-      const monthsRes = await fetchMonths();
+      const [monthsRes, availRes] = await Promise.all([
+        fetchMonths(),
+        fetchAvailability(),
+      ]);
+
+      if (availRes.ok) {
+        const nextAvailabilityInfo = {
+          latestAvailableMonth: availRes.latest_available_month,
+          currentMonthPublished: availRes.current_month_published,
+          nextReleaseMonth: availRes.next_release_month,
+        };
+        availabilityInfoRef.current = nextAvailabilityInfo;
+        setAvailabilityInfo(nextAvailabilityInfo);
+      }
+
       let target = currentMonthIso;
       if (monthsRes.ok) {
-        const list = monthsRes.months.length > 0 ? monthsRes.months : [FALLBACK_MONTH];
+        const listSet = new Set(monthsRes.months.length > 0 ? monthsRes.months : [FALLBACK_MONTH]);
+        listSet.add(currentLocalMonthIso());
+        const list = Array.from(listSet).sort((a, b) => b.localeCompare(a));
         setAvailableMonths(list);
         if (list.length > 0 && !list.includes(currentMonthIso)) {
           target = list[0]!;

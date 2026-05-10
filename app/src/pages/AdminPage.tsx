@@ -46,6 +46,7 @@ export default function AdminPage() {
   const safeSalesRange = chartConfig.salesRange || DEFAULT_CHART_CONFIG.salesRange;
   const [knownBrands, setKnownBrands] = useState<string[]>([]);
   const [brandPalette, setBrandPalette] = useState<string[]>([]);
+  const [brandSalesMap, setBrandSalesMap] = useState<Record<string, number>>({});
   const [newBrandName, setNewBrandName] = useState('');
   const [configSaving, setConfigSaving] = useState(false);
 
@@ -79,6 +80,7 @@ export default function AdminPage() {
     if (brandsRes.ok) {
       setKnownBrands(brandsRes.brands);
       setBrandPalette(brandsRes.palette);
+      setBrandSalesMap(brandsRes.salesMap || {});
     }
   }, []);
 
@@ -233,10 +235,16 @@ export default function AdminPage() {
   const allBrands = useMemo(() => {
     const result = [...knownBrands];
     const configBrands = Object.keys(chartConfig.highlightedBrandColors).filter(b => !knownBrands.includes(b));
-    configBrands.sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'));
     result.push(...configBrands);
+    // 按总销量降序排列，无销量按名称字母序排后面
+    result.sort((a, b) => {
+      const salesA = brandSalesMap[a] || 0;
+      const salesB = brandSalesMap[b] || 0;
+      if (salesA !== salesB) return salesB - salesA;
+      return a.localeCompare(b, 'zh-Hans-CN');
+    });
     return result;
-  }, [knownBrands, chartConfig.highlightedBrandColors]);
+  }, [knownBrands, chartConfig.highlightedBrandColors, brandSalesMap]);
 
   return (
     <div className="h-full flex flex-col" style={{ backgroundColor: 'var(--bg-canvas)' }}>
@@ -449,7 +457,20 @@ export default function AdminPage() {
                     type="text"
                     placeholder="开始 如 202408"
                     value={fetchStartMonth}
-                    onChange={e => setFetchStartMonth(e.target.value)}
+                    onChange={e => {
+                      const val = e.target.value;
+                      setFetchStartMonth(val);
+                      // 自动计算结束月份：开始月份 + 11个月（共12个月）
+                      if (/^\d{6}$/.test(val)) {
+                        const y = parseInt(val.slice(0, 4), 10);
+                        const m = parseInt(val.slice(4, 6), 10);
+                        if (m >= 1 && m <= 12) {
+                          const endDate = new Date(y, m - 1 + 11, 1);
+                          const endStr = `${endDate.getFullYear()}${String(endDate.getMonth() + 1).padStart(2, '0')}`;
+                          setFetchEndMonth(endStr);
+                        }
+                      }
+                    }}
                     className="h-8 px-2 text-xs font-mono rounded-md border w-32"
                     style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}
                   />
@@ -470,6 +491,18 @@ export default function AdminPage() {
                   >
                     {fetchLoading ? '抓取中...' : '自动抓取范围'}
                   </button>
+                  {fetchStartMonth && fetchEndMonth && (
+                    <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                      共 {(() => {
+                        const sy = parseInt(fetchStartMonth.slice(0, 4), 10);
+                        const sm = parseInt(fetchStartMonth.slice(4, 6), 10);
+                        const ey = parseInt(fetchEndMonth.slice(0, 4), 10);
+                        const em = parseInt(fetchEndMonth.slice(4, 6), 10);
+                        const count = (ey - sy) * 12 + (em - sm) + 1;
+                        return count > 0 ? `${count} 个月` : '';
+                      })()}
+                    </span>
+                  )}
                 </div>
                 <div className="flex items-center gap-3 flex-wrap">
                   <span className="text-xs" style={{ color: 'var(--text-muted)' }}>单月抓取：</span>
@@ -682,6 +715,8 @@ export default function AdminPage() {
                         <th className="text-right py-2 px-2 font-medium whitespace-nowrap" style={{ color: 'var(--text-muted)' }}>均价(万)</th>
                         <th className="text-right py-2 px-2 font-medium whitespace-nowrap" style={{ color: 'var(--text-muted)' }}>销量</th>
                         <th className="text-left py-2 px-2 font-medium whitespace-nowrap" style={{ color: 'var(--text-muted)' }}>能源类型</th>
+                        <th className="text-right py-2 px-2 font-medium whitespace-nowrap" style={{ color: 'var(--text-muted)' }}>算力</th>
+                        <th className="text-right py-2 px-2 font-medium whitespace-nowrap" style={{ color: 'var(--text-muted)' }}>续航(km)</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -694,6 +729,8 @@ export default function AdminPage() {
                           <td className="py-2 px-2 text-right font-mono whitespace-nowrap" style={{ color: 'var(--text-secondary)' }}>{row.price}</td>
                           <td className="py-2 px-2 text-right font-mono whitespace-nowrap" style={{ color: 'var(--text-secondary)' }}>{row.sales}</td>
                           <td className="py-2 px-2 whitespace-nowrap" style={{ color: 'var(--text-secondary)' }}>{row.powerType}</td>
+                          <td className="py-2 px-2 text-right font-mono whitespace-nowrap" style={{ color: 'var(--text-secondary)' }}>{row.computingPower ?? '-'}</td>
+                          <td className="py-2 px-2 text-right font-mono whitespace-nowrap" style={{ color: 'var(--text-secondary)' }}>{row.range ?? '-'}</td>
                         </tr>
                       ))}
                     </tbody>

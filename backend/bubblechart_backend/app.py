@@ -191,16 +191,23 @@ def create_app(config: Optional[Config] = None) -> Flask:
         # 数据库中已有的月份
         db_months = dbutil.list_dongchedi_style_months(cfg.db_path)
 
-        # 下个月预计发布时间
-        if now.month == 12:
+        # 下一次榜单预计发布时间：每月 10 号发布上个月数据
+        if now.day < 10:
+            next_release = datetime.datetime(now.year, now.month, 10)
+            next_release_month = f"{now.year}-{now.month:02d}"
+        elif now.month == 12:
             next_release = datetime.datetime(now.year + 1, 1, 10)
             next_release_month = f"{now.year + 1}-01"
         else:
             next_release = datetime.datetime(now.year, now.month + 1, 10)
             next_release_month = f"{now.year}-{now.month + 1:02d}"
 
-        # 当前月数据是否已经发布（当前日期 >= 下个月10号）
-        current_month_published = now >= next_release
+        # 当前月数据要到下个月 10 号后才可能发布
+        if now.month == 12:
+            current_month_release = datetime.datetime(now.year + 1, 1, 10)
+        else:
+            current_month_release = datetime.datetime(now.year, now.month + 1, 10)
+        current_month_published = now >= current_month_release
 
         return jsonify({
             "ok": True,
@@ -363,10 +370,43 @@ def create_app(config: Optional[Config] = None) -> Flask:
 
     @app.route("/api/brands", methods=["GET"])
     def brands():
+        brand_sales: dict[str, int] = {}
+        if dbutil.db_exists(cfg.db_path):
+            import sqlite3
+            from bubblechart_backend.cleaning import clean_number
+
+            conn = sqlite3.connect(str(cfg.db_path))
+            try:
+                for month in dbutil.list_dongchedi_style_months(cfg.db_path):
+                    table = dongchedi_sales.validated_month_table_name(month)
+                    if not table:
+                        continue
+                    try:
+                        cur = conn.execute(f'SELECT brand, sales_num FROM "{table}" WHERE brand IS NOT NULL AND TRIM(brand) != ""')
+                        for row in cur.fetchall():
+                            brand = str(row[0]).strip()
+                            if not brand:
+                                continue
+                            sales = clean_number(row[1])
+                            brand_sales[brand] = brand_sales.get(brand, 0) + sales
+                    except sqlite3.Error:
+                        continue
+            finally:
+                conn.close()
+
+        # 将配置中的品牌也加入（销量为0）
+        for b in _load_chart_config(cfg)["highlightedBrandColors"].keys():
+            if b not in brand_sales:
+                brand_sales[b] = 0
+
+        # 按销量降序，相同销量按名称字母序
+        sorted_brands = sorted(brand_sales.keys(), key=lambda b: (-brand_sales.get(b, 0), b))
+
         return jsonify({
             "ok": True,
-            "brands": _list_known_brands(cfg),
+            "brands": sorted_brands,
             "palette": DEFAULT_BRAND_PALETTE,
+            "salesMap": brand_sales,
         })
 
     # ------------------------------------------------------------------

@@ -46,16 +46,15 @@ def get_latest_available_month(reference: Optional[datetime] = None) -> str:
     """
     懂车帝销量榜数据滞后一个月，通常在下个月 10 号后更新。
     返回当前能抓到的最新月份（YYYYMM）。
-    例如：4月29日 → 返回 202603（3月数据）
+    例如：5月1日 → 返回 202603（3月数据），5月10日 → 返回 202604（4月数据）
     """
     now = reference or datetime.now()
-    # 上个月
-    if now.month == 1:
-        year = now.year - 1
-        month = 12
-    else:
-        year = now.year
-        month = now.month - 1
+    months_back = 1 if now.day >= 10 else 2
+    year = now.year
+    month = now.month - months_back
+    while month <= 0:
+        year -= 1
+        month += 12
     return f"{year}{month:02d}"
 
 

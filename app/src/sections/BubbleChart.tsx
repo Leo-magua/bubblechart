@@ -1,11 +1,73 @@
 import { useEffect, useRef, useCallback, useMemo, useState } from 'react';
-import * as echarts from 'echarts';
+import echarts, { type EChartsOption, type ECharts } from '@/lib/echarts';
 import type { ConfigVersion, ViewPreset, QuadrantState, QuadrantType } from '@/types';
 import { quadrantInfos } from '@/data/mockData';
 
 const GRID = { left: 60, right: 40, top: 40, bottom: 50 } as const;
 const LEGEND_BASE_TOP = GRID.top + 8;
 const LEGEND_BASE_RIGHT = GRID.right + 14;
+
+/** 简单的 throttle 高阶函数 */
+function throttle<T extends (...args: unknown[]) => void>(fn: T, wait: number): T {
+  let lastTime = 0;
+  return ((...args: unknown[]) => {
+    const now = performance.now();
+    if (now - lastTime < wait) return;
+    lastTime = now;
+    fn(...args);
+  }) as T;
+}
+
+interface ChartSeriesData {
+  value: [
+    number,
+    number,
+    number,
+    string,
+    string,
+    string,
+    string,
+    string,
+    string,
+    number,
+    string,
+    string,
+  ];
+}
+
+interface ChartClickParams {
+  componentType?: string;
+  data?: ChartSeriesData;
+}
+
+interface DragEventLike {
+  offsetX: number;
+  offsetY: number;
+}
+
+function getChartSeriesData(params: unknown): ChartSeriesData | null {
+  if (!params || typeof params !== 'object') return null;
+  const data = (params as { data?: unknown }).data;
+  if (!data || typeof data !== 'object') return null;
+  const value = (data as { value?: unknown }).value;
+  return Array.isArray(value) ? data as ChartSeriesData : null;
+}
+
+function getChartClickParams(params: unknown): ChartClickParams {
+  if (!params || typeof params !== 'object') return {};
+  const record = params as { componentType?: unknown; data?: unknown };
+  return {
+    componentType: typeof record.componentType === 'string' ? record.componentType : undefined,
+    data: getChartSeriesData(params) ?? undefined,
+  };
+}
+
+function getDragEvent(value: unknown): DragEventLike | null {
+  if (!value || typeof value !== 'object') return null;
+  const record = value as { offsetX?: unknown; offsetY?: unknown };
+  if (typeof record.offsetX !== 'number' || typeof record.offsetY !== 'number') return null;
+  return { offsetX: record.offsetX, offsetY: record.offsetY };
+}
 
 interface BubbleChartProps {
   data: ConfigVersion[];
@@ -32,6 +94,28 @@ function hexToRgba(hex: string, alpha: number): string {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
+function escapeHtml(value: unknown): string {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function axisMidpoint(min: number | undefined, max: number | undefined, fallback: number): number {
+  if (Number.isFinite(min) && Number.isFinite(max)) {
+    return (min! + max!) / 2;
+  }
+  return fallback;
+}
+
+function meanOrFallback(values: number[], fallback: number): number {
+  const finiteValues = values.filter(Number.isFinite);
+  if (finiteValues.length === 0) return fallback;
+  return finiteValues.reduce((a, b) => a + b, 0) / finiteValues.length;
+}
+
 /** 构建散点 series 数据与气泡大小参数 */
 function buildSeriesItems(
   data: ConfigVersion[],
@@ -53,11 +137,17 @@ function buildSeriesItems(
   const sqrtMax = Math.sqrt(maxSales);
   const sqrtSpan = Math.max(sqrtMax - sqrtMin, 1);
 
-  // 预计算品牌分组，避免每个数据点都 O(n) filter
+  // 预计算品牌分组和索引映射，避免 O(n²) 的 findIndex
   const brandMap: Record<string, ConfigVersion[]> = {};
   for (const d of data) {
     if (!brandMap[d.brand]) brandMap[d.brand] = [];
     brandMap[d.brand].push(d);
+  }
+  const brandIndexMap: Record<string, Map<string, number>> = {};
+  for (const [brand, items] of Object.entries(brandMap)) {
+    const map = new Map<string, number>();
+    items.forEach((it, i) => map.set(it.id, i));
+    brandIndexMap[brand] = map;
   }
 
   const items = data.map((item) => {
@@ -77,7 +167,7 @@ function buildSeriesItems(
     const isDimmed = activeBrand !== null && activeBrand !== item.brand;
 
     const sameBrandConfigs = brandMap[item.brand];
-    const configIndex = sameBrandConfigs.findIndex(d => d.id === item.id);
+    const configIndex = brandIndexMap[item.brand]?.get(item.id) ?? 0;
     const opacityBase = 0.5 + (configIndex / Math.max(sameBrandConfigs.length - 1, 1)) * 0.5;
 
     return {
@@ -119,9 +209,11 @@ export function BubbleChart({
   unselectedBrandColor,
 }: BubbleChartProps) {
   const chartRef = useRef<HTMLDivElement>(null);
-  const chartInstance = useRef<echarts.ECharts | null>(null);
+  const chartInstance = useRef<ECharts | null>(null);
   const applyQuadrantOverlaysRef = useRef<(() => void) | null>(null);
   const overlayRafId = useRef<number | null>(null);
+  const lastOverlayCx = useRef<number | null>(null);
+  const lastOverlayCy = useRef<number | null>(null);
   const [activeBrand, setActiveBrand] = useState<string | null>(null);
 
   // Refs for values that change often but shouldn't trigger full option rebuild
@@ -145,24 +237,33 @@ export function BubbleChart({
 
   const xMean = useMemo(() => {
     if (quadrant.xThreshold !== 'mean' && quadrant.xManualValue !== undefined) return quadrant.xManualValue;
-    return xValues.reduce((a, b) => a + b, 0) / xValues.length;
-  }, [xValues, quadrant.xThreshold, quadrant.xManualValue]);
+    return meanOrFallback(
+      xValues,
+      axisMidpoint(preset.xAxis.min, preset.xAxis.max, 0),
+    );
+  }, [xValues, preset.xAxis.min, preset.xAxis.max, quadrant.xThreshold, quadrant.xManualValue]);
 
   const yMean = useMemo(() => {
     if (quadrant.yThreshold !== 'mean' && quadrant.yManualValue !== undefined) return quadrant.yManualValue;
-    return yValues.reduce((a, b) => a + b, 0) / yValues.length;
-  }, [yValues, quadrant.yThreshold, quadrant.yManualValue]);
+    return meanOrFallback(
+      yValues,
+      axisMidpoint(preset.yAxis.min, preset.yAxis.max, 0),
+    );
+  }, [yValues, preset.yAxis.min, preset.yAxis.max, quadrant.yThreshold, quadrant.yManualValue]);
 
-  // 防抖：每帧最多执行一次 overlay 更新
-  const scheduleApplyOverlays = useCallback(() => {
-    if (overlayRafId.current !== null) return;
-    overlayRafId.current = requestAnimationFrame(() => {
-      overlayRafId.current = null;
-      applyQuadrantOverlaysRef.current?.();
-    });
-  }, []);
+  // dataZoom 拖动时事件非常密集，用 throttle 限制 overlay 更新频率到每 80ms 一次
+  const scheduleApplyOverlays = useCallback(
+    throttle(() => {
+      if (overlayRafId.current !== null) return;
+      overlayRafId.current = requestAnimationFrame(() => {
+        overlayRafId.current = null;
+        applyQuadrantOverlaysRef.current?.();
+      });
+    }, 80),
+    [],
+  );
 
-  const buildOption = useCallback((): echarts.EChartsOption => {
+  const buildOption = useCallback((): EChartsOption => {
     const g = GRID;
     const { items: seriesData, sqrtMin, sqrtSpan } = buildSeriesItems(
       data, preset, xMean, yMean,
@@ -170,7 +271,7 @@ export function BubbleChart({
       activeBrandRef.current, selectedIdRef.current,
     );
 
-    const option: echarts.EChartsOption = {
+    const option: EChartsOption = {
       backgroundColor: 'transparent',
       grid: { left: g.left, right: g.right, top: g.top, bottom: g.bottom },
       tooltip: {
@@ -185,17 +286,29 @@ export function BubbleChart({
           fontFamily: '"Inter", "PingFang SC", sans-serif',
         },
         extraCssText: 'backdrop-filter: blur(8px); border-radius: 8px; box-shadow: 0 8px 32px rgba(0,0,0,0.4);',
-        formatter: (params: any) => {
-          const d = params.data;
-          const [xVal, yVal, sales, _id, _brand, brandColor, _configName, qType, qColor, _opacity, modelName, priceRange] = d.value;
+        formatter: (params: unknown) => {
+          const d = getChartSeriesData(params);
+          if (!d) return '';
+          const xVal = d.value[0];
+          const yVal = d.value[1];
+          const sales = d.value[2];
+          const brandColor = d.value[5];
+          const qType = d.value[7];
+          const qColor = d.value[8];
+          const modelName = d.value[10];
+          const priceRange = d.value[11];
           const qInfo = quadrantInfos[qType as string];
-          const priceRangeHtml = priceRange ? `<span style="font-size:11px;color:#8B91A7;font-family:'JetBrains Mono',monospace;">${priceRange}</span>` : '';
+          const safeModelName = escapeHtml(modelName);
+          const safePriceRange = escapeHtml(priceRange);
+          const safeQuadrantLabel = escapeHtml(qInfo?.label || '');
+          const safeQuadrantDescription = escapeHtml(qInfo?.description || '');
+          const priceRangeHtml = safePriceRange ? `<span style="font-size:11px;color:#8B91A7;font-family:'JetBrains Mono',monospace;">${safePriceRange}</span>` : '';
           return `
             <div style="min-width: 200px;">
               <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;gap:8px;">
                 <div style="display:flex;align-items:center;gap:6px;min-width:0;">
                   <span style="display:inline-block;width:6px;height:14px;border-radius:2px;background:${brandColor};flex-shrink:0;"></span>
-                  <span style="font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${modelName}</span>
+                  <span style="font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${safeModelName}</span>
                 </div>
                 ${priceRangeHtml}
               </div>
@@ -215,7 +328,7 @@ export function BubbleChart({
               </div>
               <div style="display:flex;align-items:center;gap:6px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.08);">
                 <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${qColor};"></span>
-                <span style="font-size:11px;color:${qColor};">${qInfo?.label || ''} — ${qInfo?.description || ''}</span>
+                <span style="font-size:11px;color:${qColor};">${safeQuadrantLabel} — ${safeQuadrantDescription}</span>
               </div>
             </div>
           `;
@@ -319,10 +432,10 @@ export function BubbleChart({
             const normalized = (Math.sqrt(Math.max(0, sales)) - sqrtMin) / sqrtSpan;
             return Math.max(10, Math.min(70, 10 + normalized * 60));
           },
-          animationDuration: 400,
+          animationDuration: 300,
           animationEasing: 'cubicOut',
-          animationDurationUpdate: 100,
-          animationEasingUpdate: 'cubicInOut',
+          animationDurationUpdate: 0,
+          progressive: 100,
         },
       ],
     };
@@ -338,9 +451,10 @@ export function BubbleChart({
     const chart = echarts.init(chartRef.current, undefined, { renderer: 'canvas' });
     chartInstance.current = chart;
 
-    chart.on('click', (params: any) => {
-      if (params.componentType === 'series') {
-        const clickedId = params.data.value[3] as string;
+    chart.on('click', (params: unknown) => {
+      const clickParams = getChartClickParams(params);
+      if (clickParams.componentType === 'series' && clickParams.data) {
+        const clickedId = clickParams.data.value[3];
         onSelect(selectedIdRef.current === clickedId ? null : clickedId);
       } else {
         onSelect(null);
@@ -360,13 +474,13 @@ export function BubbleChart({
     window.addEventListener('resize', handleResize);
 
     chart.on('dataZoom', scheduleApplyOverlays);
-    chart.on('finished', scheduleApplyOverlays);
+    // 注意：不要监听 finished，否则 setOption(graphic) -> 渲染 -> finished ->
+    // scheduleApplyOverlays -> setOption(graphic) 会形成无限循环
 
     return () => {
       window.removeEventListener('resize', handleResize);
       if (resizeTimeout !== null) clearTimeout(resizeTimeout);
       chart.off('dataZoom', scheduleApplyOverlays);
-      chart.off('finished', scheduleApplyOverlays);
       if (overlayRafId.current !== null) {
         cancelAnimationFrame(overlayRafId.current);
         overlayRafId.current = null;
@@ -381,6 +495,8 @@ export function BubbleChart({
   useEffect(() => {
     if (!chartInstance.current) return;
     chartInstance.current.setOption(buildOption(), { notMerge: false });
+    // setOption 后主动触发一次象限 overlay 更新（替代原来 finished 事件的作用）
+    scheduleApplyOverlays();
   }, [buildOption]);
 
   // 局部样式更新：activeBrand / selectedId 变化时只更新 series.data，不重绘整个图表
@@ -504,31 +620,46 @@ export function BubbleChart({
       if (!cross || !Number.isFinite(cross[0]!) || !Number.isFinite(cross[1]!)) {
         clear();
         isFirstApply = true;
+        lastOverlayCx.current = null;
+        lastOverlayCy.current = null;
         return;
       }
-      const cx = cross[0]! - gridX;
-      const cy = cross[1]! - gridY;
+      const cx = Math.round(cross[0]! - gridX);
+      const cy = Math.round(cross[1]! - gridY);
 
-      const xManual = (e: { offsetX: number; offsetY: number }) => {
-        const v = chart.convertFromPixel(finder, [e.offsetX, e.offsetY]);
+      // 如果象限中心位置没有变化，跳过 setOption，避免不必要的渲染
+      if (!isFirstApply && lastOverlayCx.current === cx && lastOverlayCy.current === cy) {
+        return;
+      }
+      lastOverlayCx.current = cx;
+      lastOverlayCy.current = cy;
+
+      const xManual = throttle((e: unknown) => {
+        const event = getDragEvent(e);
+        if (!event) return;
+        const v = chart.convertFromPixel(finder, [event.offsetX, event.offsetY]);
         if (!v || v[0] === undefined) return;
         const newVal = Math.max(
           preset.xAxis.min ?? -Infinity,
           Math.min(preset.xAxis.max ?? Infinity, v[0] as number),
         );
         onQuadrantChange({ ...quadrant, xThreshold: 'manual', xManualValue: newVal });
-      };
-      const yManual = (e: { offsetX: number; offsetY: number }) => {
-        const v = chart.convertFromPixel(finder, [e.offsetX, e.offsetY]);
+      }, 50);
+      const yManual = throttle((e: unknown) => {
+        const event = getDragEvent(e);
+        if (!event) return;
+        const v = chart.convertFromPixel(finder, [event.offsetX, event.offsetY]);
         if (!v || v[1] === undefined) return;
         const newVal = Math.max(
           preset.yAxis.min ?? -Infinity,
           Math.min(preset.yAxis.max ?? Infinity, v[1] as number),
         );
         onQuadrantChange({ ...quadrant, yThreshold: 'manual', yManualValue: newVal });
-      };
-      const bothManual = (e: { offsetX: number; offsetY: number }) => {
-        const v = chart.convertFromPixel(finder, [e.offsetX, e.offsetY]);
+      }, 50);
+      const bothManual = throttle((e: unknown) => {
+        const event = getDragEvent(e);
+        if (!event) return;
+        const v = chart.convertFromPixel(finder, [event.offsetX, event.offsetY]);
         if (!v || v[0] === undefined || v[1] === undefined) return;
         const nx = Math.max(
           preset.xAxis.min ?? -Infinity,
@@ -545,7 +676,7 @@ export function BubbleChart({
           xManualValue: nx,
           yManualValue: ny,
         });
-      };
+      }, 50);
 
       const axisColor = 'rgba(148, 163, 184, 0.92)';
 
@@ -560,17 +691,17 @@ export function BubbleChart({
                 left: gridX,
                 top: gridY,
                 children: [
-                  { id: 'q-rect-premium', type: 'rect' as const, shape: { x: 0, y: 0, width: Math.max(0, cx), height: Math.max(0, cy) }, z2: 0, silent: true, style: { fill: hexToRgba(quadrantInfos.premium.color, 0.08) } as any },
-                  { id: 'q-rect-star', type: 'rect' as const, shape: { x: cx, y: 0, width: Math.max(0, gridW - cx), height: Math.max(0, cy) }, z2: 0, silent: true, style: { fill: hexToRgba(quadrantInfos.star.color, 0.08) } as any },
-                  { id: 'q-rect-edge', type: 'rect' as const, shape: { x: 0, y: cy, width: Math.max(0, cx), height: Math.max(0, gridH - cy) }, z2: 0, silent: true, style: { fill: hexToRgba(quadrantInfos.edge.color, 0.08) } as any },
-                  { id: 'q-rect-volume', type: 'rect' as const, shape: { x: cx, y: cy, width: Math.max(0, gridW - cx), height: Math.max(0, gridH - cy) }, z2: 0, silent: true, style: { fill: hexToRgba(quadrantInfos.volume.color, 0.08) } as any },
-                  { id: 'q-line-v', type: 'line' as const, z2: 1, shape: { x1: cx, y1: 0, x2: cx, y2: gridH }, style: { stroke: axisColor, lineWidth: 2 } as any, draggable: 'horizontal' as const, cursor: 'ew-resize' as const, ondrag: (ev: any) => xManual(ev) },
-                  { id: 'q-line-h', type: 'line' as const, z2: 1, shape: { x1: 0, y1: cy, x2: gridW, y2: cy }, style: { stroke: axisColor, lineWidth: 2 } as any, draggable: 'vertical' as const, cursor: 'ns-resize' as const, ondrag: (ev: any) => yManual(ev) },
-                  { id: 'q-center', type: 'circle' as const, z2: 3, shape: { cx, cy, r: 7 }, style: { fill: 'rgba(20, 22, 27, 0.85)', stroke: '#00D084', lineWidth: 2, shadowBlur: 6, shadowColor: 'rgba(0,0,0,0.4)' } as any, cursor: 'move' as const, draggable: true, ondrag: (ev: any) => bothManual(ev) },
-                  { id: 'q-text-premium', type: 'text' as const, x: cx / 2, y: cy / 2, z2: 2, silent: true, style: { text: '🔵 溢价配置', fill: quadrantInfos.premium.color, fontSize: 11, fontWeight: 500, textAlign: 'center', textVerticalAlign: 'middle' } as any },
-                  { id: 'q-text-star', type: 'text' as const, x: (cx + gridW) / 2, y: cy / 2, z2: 2, silent: true, style: { text: '🟢 量价齐高', fill: quadrantInfos.star.color, fontSize: 11, fontWeight: 500, textAlign: 'center', textVerticalAlign: 'middle' } as any },
-                  { id: 'q-text-edge', type: 'text' as const, x: cx / 2, y: (cy + gridH) / 2, z2: 2, silent: true, style: { text: '⚪ 边缘配置', fill: quadrantInfos.edge.color, fontSize: 11, fontWeight: 500, textAlign: 'center', textVerticalAlign: 'middle' } as any },
-                  { id: 'q-text-volume', type: 'text' as const, x: (cx + gridW) / 2, y: (cy + gridH) / 2, z2: 2, silent: true, style: { text: '🔴 以价换量', fill: quadrantInfos.volume.color, fontSize: 11, fontWeight: 500, textAlign: 'center', textVerticalAlign: 'middle' } as any },
+                  { id: 'q-rect-premium', type: 'rect' as const, shape: { x: 0, y: 0, width: Math.max(0, cx), height: Math.max(0, cy) }, z2: 0, silent: true, style: { fill: hexToRgba(quadrantInfos.premium.color, 0.08) } },
+                  { id: 'q-rect-star', type: 'rect' as const, shape: { x: cx, y: 0, width: Math.max(0, gridW - cx), height: Math.max(0, cy) }, z2: 0, silent: true, style: { fill: hexToRgba(quadrantInfos.star.color, 0.08) } },
+                  { id: 'q-rect-edge', type: 'rect' as const, shape: { x: 0, y: cy, width: Math.max(0, cx), height: Math.max(0, gridH - cy) }, z2: 0, silent: true, style: { fill: hexToRgba(quadrantInfos.edge.color, 0.08) } },
+                  { id: 'q-rect-volume', type: 'rect' as const, shape: { x: cx, y: cy, width: Math.max(0, gridW - cx), height: Math.max(0, gridH - cy) }, z2: 0, silent: true, style: { fill: hexToRgba(quadrantInfos.volume.color, 0.08) } },
+                  { id: 'q-line-v', type: 'line' as const, z2: 1, shape: { x1: cx, y1: 0, x2: cx, y2: gridH }, style: { stroke: axisColor, lineWidth: 2 }, draggable: 'horizontal' as const, cursor: 'ew-resize' as const, ondrag: xManual },
+                  { id: 'q-line-h', type: 'line' as const, z2: 1, shape: { x1: 0, y1: cy, x2: gridW, y2: cy }, style: { stroke: axisColor, lineWidth: 2 }, draggable: 'vertical' as const, cursor: 'ns-resize' as const, ondrag: yManual },
+                  { id: 'q-center', type: 'circle' as const, z2: 3, shape: { cx, cy, r: 7 }, style: { fill: 'rgba(20, 22, 27, 0.85)', stroke: '#00D084', lineWidth: 2, shadowBlur: 6, shadowColor: 'rgba(0,0,0,0.4)' }, cursor: 'move' as const, draggable: true, ondrag: bothManual },
+                  { id: 'q-text-premium', type: 'text' as const, x: cx / 2, y: cy / 2, z2: 2, silent: true, style: { text: '🔵 溢价配置', fill: quadrantInfos.premium.color, fontSize: 11, fontWeight: 500, textAlign: 'center', textVerticalAlign: 'middle' } },
+                  { id: 'q-text-star', type: 'text' as const, x: (cx + gridW) / 2, y: cy / 2, z2: 2, silent: true, style: { text: '🟢 量价齐高', fill: quadrantInfos.star.color, fontSize: 11, fontWeight: 500, textAlign: 'center', textVerticalAlign: 'middle' } },
+                  { id: 'q-text-edge', type: 'text' as const, x: cx / 2, y: (cy + gridH) / 2, z2: 2, silent: true, style: { text: '⚪ 边缘配置', fill: quadrantInfos.edge.color, fontSize: 11, fontWeight: 500, textAlign: 'center', textVerticalAlign: 'middle' } },
+                  { id: 'q-text-volume', type: 'text' as const, x: (cx + gridW) / 2, y: (cy + gridH) / 2, z2: 2, silent: true, style: { text: '🔴 以价换量', fill: quadrantInfos.volume.color, fontSize: 11, fontWeight: 500, textAlign: 'center', textVerticalAlign: 'middle' } },
                 ],
               },
             ],
@@ -606,12 +737,16 @@ export function BubbleChart({
 
     if (!quadrant.enabled) {
       clear();
+      lastOverlayCx.current = null;
+      lastOverlayCy.current = null;
       return () => {
         applyQuadrantOverlaysRef.current = null;
       };
     }
     if (data.length === 0) {
       clear();
+      lastOverlayCx.current = null;
+      lastOverlayCy.current = null;
       return () => {
         applyQuadrantOverlaysRef.current = null;
       };

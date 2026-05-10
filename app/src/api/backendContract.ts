@@ -89,6 +89,7 @@ export type DbInfoResponse = HttpOk<{
 export type BrandsResponse = HttpOk<{
   brands: string[];
   palette: string[];
+  salesMap?: Record<string, number>;
 }>;
 
 /** GET /api/preview */

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import * as echarts from 'echarts';
+import echarts, { type EChartsOption } from '@/lib/echarts';
 import { X, TrendingUp, TrendingDown, ExternalLink } from 'lucide-react';
 import type { ConfigVersion, QuadrantType } from '@/types';
 import { quadrantInfos } from '@/data/mockData';
@@ -26,6 +26,25 @@ interface BrandModelMatrixItem {
   computingPower: number;
   range: number;
   selectedConfigId: string;
+}
+
+interface ChartParamData {
+  name?: string;
+  value?: unknown[];
+}
+
+function getChartParamData(params: unknown): ChartParamData {
+  if (!params || typeof params !== 'object') return {};
+
+  const record = params as { name?: unknown; data?: unknown };
+  const data = record.data && typeof record.data === 'object'
+    ? record.data as { value?: unknown }
+    : {};
+
+  return {
+    name: typeof record.name === 'string' ? record.name : undefined,
+    value: Array.isArray(data.value) ? data.value : undefined,
+  };
 }
 
 function getQuadrant(x: number, y: number, xThreshold: number, yThreshold: number): QuadrantType {
@@ -74,6 +93,15 @@ function hexToRgba(hex: string, alpha: number): string {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
+function escapeHtml(value: unknown): string {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 export function DetailPanel({
   config,
   allData,
@@ -85,8 +113,11 @@ export function DetailPanel({
   onSelectConfig,
 }: DetailPanelProps) {
   const brandMatrixRef = useRef<HTMLDivElement>(null);
-  const [seriesConfig, setSeriesConfig] = useState<SeriesConfigData | null>(null);
-  const [seriesConfigLoading, setSeriesConfigLoading] = useState(false);
+  const [seriesConfigResult, setSeriesConfigResult] = useState<{ carSeriesId: string; data: SeriesConfigData } | null>(null);
+  const [seriesConfigLoadingId, setSeriesConfigLoadingId] = useState<string | null>(null);
+  const carSeriesId = config?.carSeriesId;
+  const seriesConfig = seriesConfigResult && seriesConfigResult.carSeriesId === carSeriesId ? seriesConfigResult.data : null;
+  const seriesConfigLoading = Boolean(carSeriesId && seriesConfigLoadingId === carSeriesId);
 
   const qType: QuadrantType = config
     ? getQuadrant(
@@ -197,7 +228,7 @@ export function DetailPanel({
         symbolSize: isCurrent ? 16 : 11,
       };
     });
-  }, [brandModelMatrix, config?.model, xField, yField]);
+  }, [brandModelMatrix, config, xField, yField]);
 
   const brandMatrixXExtent = useMemo(
     () => getPaddedExtent(brandMatrixChartData.map(item => item.value[0] as number)),
@@ -212,7 +243,7 @@ export function DetailPanel({
     if (!config || !brandMatrixRef.current || brandMatrixChartData.length <= 1) return undefined;
 
     const chart = echarts.init(brandMatrixRef.current, undefined, { renderer: 'canvas' });
-    const option: echarts.EChartsOption = {
+    const option: EChartsOption = {
       backgroundColor: 'transparent',
       animation: false,
       grid: { left: 12, right: 12, top: 10, bottom: 20 },
@@ -228,20 +259,26 @@ export function DetailPanel({
           fontFamily: '"Inter", "PingFang SC", sans-serif',
         },
         extraCssText: 'border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.32);',
-        formatter: (params: any) => {
-          const data = params.data;
-          const [xValue, yValue, sales, avgPrice, configCount, , computingPower, range] = data.value;
+        formatter: (params: unknown) => {
+          const paramData = getChartParamData(params);
+          const value = paramData.value;
+          if (!value) return '';
+
+          const [xValue, yValue, sales, avgPrice, configCount, , computingPower, range] = value;
+          const xNumber = Number(xValue);
+          const yNumber = Number(yValue);
+          const safeName = escapeHtml(paramData.name);
 
           return `
             <div style="min-width:180px;">
-              <div style="font-size:13px;font-weight:600;margin-bottom:8px;">${params.name}</div>
+              <div style="font-size:13px;font-weight:600;margin-bottom:8px;">${safeName}</div>
               <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
                 <span style="color:#8B91A7;">${xField === 'price' ? '车型均价' : xField === 'computingPower' ? '最高算力' : '最长续航'}</span>
-                <span>${formatMetricValue(xField, xValue)}</span>
+                <span>${formatMetricValue(xField, xNumber)}</span>
               </div>
               <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
                 <span style="color:#8B91A7;">${yField === 'price' ? '车型均价' : '车型销量'}</span>
-                <span>${formatMetricValue(yField, yValue)}</span>
+                <span>${formatMetricValue(yField, yNumber)}</span>
               </div>
               <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
                 <span style="color:#8B91A7;">车型总销量</span>
@@ -285,8 +322,8 @@ export function DetailPanel({
 
     chart.setOption(option);
 
-    const handleClick = (params: any) => {
-      const targetId = params?.data?.value?.[5];
+    const handleClick = (params: unknown) => {
+      const targetId = getChartParamData(params).value?.[5];
       if (typeof targetId === 'string' && targetId !== config.id) {
         onSelectConfig(targetId);
       }
@@ -314,22 +351,35 @@ export function DetailPanel({
 
   // 拉取车系配置数据
   useEffect(() => {
-    if (!config?.carSeriesId) {
-      setSeriesConfig(null);
+    let cancelled = false;
+
+    if (!carSeriesId) {
       return;
     }
-    setSeriesConfigLoading(true);
-    fetchSeriesConfig(config.carSeriesId)
+
+    queueMicrotask(() => {
+      if (!cancelled) setSeriesConfigLoadingId(carSeriesId);
+    });
+    fetchSeriesConfig(carSeriesId)
       .then((res) => {
+        if (cancelled) return;
         if (res.ok) {
-          setSeriesConfig(res.data);
+          setSeriesConfigResult({ carSeriesId, data: res.data });
         } else {
-          setSeriesConfig(null);
+          setSeriesConfigResult(null);
         }
       })
-      .catch(() => setSeriesConfig(null))
-      .finally(() => setSeriesConfigLoading(false));
-  }, [config?.carSeriesId]);
+      .catch(() => {
+        if (!cancelled) setSeriesConfigResult(null);
+      })
+      .finally(() => {
+        if (!cancelled) setSeriesConfigLoadingId(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [carSeriesId]);
 
   if (!config) return null;
 
@@ -344,7 +394,7 @@ export function DetailPanel({
   // 该级别总销量（用于市占率）
   const sameLevelConfigs = allData.filter(d => d.level === config.level);
   const levelTotalSales = sameLevelConfigs.reduce((sum, d) => sum + d.sales, 0);
-  const marketShare = ((config.sales / levelTotalSales) * 100).toFixed(1);
+  const marketShare = levelTotalSales > 0 ? ((config.sales / levelTotalSales) * 100).toFixed(1) : '0.0';
 
   return (
     <div
